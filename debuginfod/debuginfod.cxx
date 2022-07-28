@@ -94,6 +94,12 @@ using namespace std;
 
 #include <microhttpd.h>
 
+#ifdef HAVE_RPM
+  #include <rpm/rpmlib.h>
+  #include <rpm/rpmfi.h>
+  #include <rpm/header.h>
+#endif
+
 #if MHD_VERSION >= 0x00097002
 // libmicrohttpd 0.9.71 broke API
 #define MHD_RESULT enum MHD_Result
@@ -1627,6 +1633,47 @@ handle_buildid_r_match (bool internal_req_p,
       return 0;
     }
 
+  // Extract the IMA per-file signature (if it exists)
+  string ima_sig = "";
+  #ifdef HAVE_RPM
+  do{
+    FD_t rpm_fd;
+    if(!(rpm_fd = Fopen(b_source0.c_str(), "r.ufdio"))){
+      obatched(clog) << "There was an issue opening " << b_source0 << endl;
+      break;
+    }
+
+    Header rpm_hdr;
+    if(RPMRC_FAIL == rpmReadPackageFile(NULL, rpm_fd, b_source0.c_str(), &rpm_hdr)){
+      obatched(clog) << "There was an issue reading the header of " << b_source0 << endl;
+      Fclose(rpm_fd);
+      break;
+    }
+    rpmfi hdr_fi = rpmfiNew(NULL, rpm_hdr, RPMTAG_BASENAMES, RPMFI_FLAGS_QUERY);
+
+    // Load ALL the signatures as an array of newline seperated ascii HEX STRINGS
+    char *hex_sig_array = headerFormat(rpm_hdr, "[%{FILESIGNATURES}\n]", NULL);
+
+    // Linearly search the array for the signature coresponding to b_source1
+    int idx;
+    char *sig = NULL;
+    for(sig = strtok(hex_sig_array, "\n"), idx = rpmfiNext(hdr_fi);
+        idx != -1 && ((sig && !strcmp(b_source1.c_str(), rpmfiFN(hdr_fi))) || !sig);
+        sig = strtok(NULL, "\n"), idx = rpmfiNext(hdr_fi));
+
+    if(sig && idx != -1){
+      if(verbose) obatched(clog) << "Found IMA signature for " << b_source1 << ":\n" << sig << endl;
+      ima_sig = sig;
+    }else{
+      if(verbose) obatched(clog) << "Could not find IMA signature for " << b_source1 << endl;
+    }
+
+    free(hex_sig_array);
+    rpmfiFree(hdr_fi);
+    Fclose(rpm_fd);
+  }while(false);
+  #endif
+
   // check for a match in the fdcache first
   int fd = fdcache.lookup(b_source0, b_source1);
   while (fd >= 0) // got one!; NB: this is really an if() with a possible branch out to the end
@@ -1657,6 +1704,7 @@ handle_buildid_r_match (bool internal_req_p,
 			       to_string(fs.st_size).c_str());
       add_mhd_response_header (r, "X-DEBUGINFOD-ARCHIVE", b_source0.c_str());
       add_mhd_response_header (r, "X-DEBUGINFOD-FILE", b_source1.c_str());
+      if(!ima_sig.empty()) add_mhd_response_header(r, "X-DEBUGINFOD-SIGNATURE", ima_sig.c_str());
       add_mhd_last_modified (r, fs.st_mtime);
       if (verbose > 1)
         obatched(clog) << "serving fdcache archive " << b_source0 << " file " << b_source1 << endl;
@@ -1805,6 +1853,7 @@ handle_buildid_r_match (bool internal_req_p,
           add_mhd_response_header (r, "X-DEBUGINFOD-ARCHIVE",
                                    b_source0.c_str());
           add_mhd_response_header (r, "X-DEBUGINFOD-FILE", file.c_str());
+          if(!ima_sig.empty()) add_mhd_response_header(r, "X-DEBUGINFOD-SIGNATURE", ima_sig.c_str());
           add_mhd_last_modified (r, archive_entry_mtime(e));
           if (verbose > 1)
             obatched(clog) << "serving archive " << b_source0 << " file " << b_source1 << endl;

@@ -75,6 +75,29 @@ only small files are downloaded. A value of 0 causes no consideration
 for size, and the client may attempt to download a file of any size.
 The default is 0 (infinite size).
 
+.TP
+.B $DEBUGINFOD_IMA_POLICY
+This environment variable dictates the policy for verifying per-file
+IMA signatures in RPMs. It can take on the value of 
+.IP
+- \fIrequire\fP: Requires a valid signature to keep retrieved files.
+.IP
+- \fIdefault\fP: Gives files the benefit of the doubt, and only rejects
+them on signature invalidity but not other issues such as errors
+or a lack of correct certification keys.
+.IP
+- \fIignore\fP:  Skips verification altogether. 
+.IP
+If this environment variable is un/illdefined
+the client will use the default policy. Alerts of 
+validation failure will be directed as specified 
+in $DEBUGINFOD_VERBOSE.
+
+.TP
+.B $DEBUGINFOD_IMA_CERT_PATHS
+This environment variable contains a list of paths to X.509 DER format certificates
+for RPM per-file IMA-verification. Alternate paths are separated by colons.
+
 .SH CACHE
 
 Before each query, the debuginfod client library checks for a need to

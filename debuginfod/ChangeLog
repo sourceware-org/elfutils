@@ -1,3 +1,14 @@
+2022-07-13  Ryan Goldberg  <rgoldber@redhat.com>
+
+	* debuginfod.cxx (handle_buildid_r_match): Added extraction of the
+	per-file IMA signature for the queried file and store in http header.
+	* debuginfod-client.c (debuginfod_query_server): Added policy for
+	validating IMA signatures
+	* (debuginfod_validate_imasig): Add
+	* debuginfod.h.in: Added DEBUGINFOD_IMA_POLICY_ENV_VAR and
+	DEBUGINFOD_IMA_CERT_PATHS_ENV_VAR.
+	* Makefile.am: Add linker flags for rpm and imaevm
+
 2022-06-03  Michael Trapp <michael.trapp@sap.com>
 
 	* debuginfod.cxx (scan_source_info): New global.

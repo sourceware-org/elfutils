@@ -1,3 +1,7 @@
+2022-07-13  Ryan Goldberg  <rgoldber@redhat.com>
+
+	* configure.ac (HAVE_RPM, HAVE_IMAEVM): Look for librpm and libimaevm
+
 2022-07-13  Mark Wielaard  <mark@klomp.org>
 
 	* NEWS: Add dwfl_get_debuginfod_client.

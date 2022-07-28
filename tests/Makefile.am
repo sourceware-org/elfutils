@@ -243,7 +243,8 @@ TESTS += run-debuginfod-dlopen.sh \
          run-debuginfod-x-forwarded-for.sh \
          run-debuginfod-response-headers.sh \
          run-debuginfod-extraction-passive.sh \
-	 run-debuginfod-webapi-concurrency.sh
+	 run-debuginfod-webapi-concurrency.sh \
+	 run-debuginfod-ima-verification.sh
 endif
 if !OLD_LIBMICROHTTPD
 # Will crash on too old libmicrohttpd
@@ -251,7 +252,6 @@ if !OLD_LIBMICROHTTPD
 TESTS += run-debuginfod-federation-metrics.sh
 endif
 endif
-
 EXTRA_DIST = run-arextract.sh run-arsymtest.sh run-ar.sh \
 	     run-show-die-info.sh run-get-files.sh run-get-lines.sh \
 	     run-next-files.sh run-next-lines.sh testfile-only-debug-line.bz2 \
@@ -547,6 +547,7 @@ EXTRA_DIST = run-arextract.sh run-arsymtest.sh run-ar.sh \
 	     run-debuginfod-response-headers.sh \
              run-debuginfod-extraction-passive.sh \
              run-debuginfod-webapi-concurrency.sh \
+		 run-debuginfod-ima-verification.sh \
 	     debuginfod-rpms/fedora30/hello2-1.0-2.src.rpm \
 	     debuginfod-rpms/fedora30/hello2-1.0-2.x86_64.rpm \
 	     debuginfod-rpms/fedora30/hello2-debuginfo-1.0-2.x86_64.rpm \
@@ -569,6 +570,8 @@ EXTRA_DIST = run-arextract.sh run-arsymtest.sh run-ar.sh \
 	     debuginfod-rpms/rhel7/hello2-debuginfo-1.0-2.x86_64.rpm \
 	     debuginfod-rpms/rhel7/hello2-two-1.0-2.x86_64.rpm \
 	     debuginfod-rpms/rhel7/hello2-two-1.0-2.x86_64.rpm \
+		 debuginfod-ima/rhel9/hello2-1.0-1.x86_64.rpm \
+		 debuginfod-ima/rhel9/imacert.der \
 	     debuginfod-debs/hithere-dbgsym_1.0-1_amd64.ddeb \
 	     debuginfod-debs/hithere_1.0-1.debian.tar.xz \
 	     debuginfod-debs/hithere_1.0-1.dsc \

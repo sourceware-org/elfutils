@@ -100,6 +100,19 @@ void debuginfod_end (debuginfod_client *c) { }
 
 #include <pthread.h>
 
+#ifdef HAVE_IMAEVM
+  #include <imaevm.h>
+  #include <openssl/evp.h>
+  static inline unsigned char hex2dec(char c)
+  {
+    if (c >= '0' && c <= '9') return (c - '0');
+    if (c >= 'a' && c <= 'f') return (c - 'a') + 10;
+    if (c >= 'A' && c <= 'F') return (c - 'A') + 10;
+    return 0;
+  }
+#endif
+enum sig_validity{valid_sig, invalid_sig, skipped_sig, no_key};
+
 static pthread_once_t init_control = PTHREAD_ONCE_INIT;
 
 static void
@@ -522,6 +535,88 @@ header_callback (char * buffer, size_t size, size_t numitems, void * userdata)
   data->response_data_size += numitems;
   data->response_data[data->response_data_size] = '\0';
   return numitems;
+}
+
+/* Validate an IMA file signature.
+ * returns valid_sig on signature validity, invalid_sig on signature invalidity, skipped_sig on undefined imaevm machinery,
+ * no_key on key issues and -1 on error
+ */
+static int
+debuginfod_validate_imasig (debuginfod_client *c, const char* tmp_path, int fd)
+{
+  (void) c;
+  (void) tmp_path;
+  (void) fd;
+  int rc = skipped_sig;
+  #ifdef HAVE_IMAEVM
+    int vfd = c->verbose_fd;
+    char* file_data = NULL;
+    EVP_MD_CTX *ctx = NULL;
+    if (!c || !c->winning_headers){
+      rc = -1;
+      goto exit_validate;
+    }
+    // Extract the HEX IMA-signature from the header
+    char sig_buf[MAX_SIGNATURE_SIZE];
+    char* hdr_ima_sig = strcasestr(c->winning_headers, "X-DEBUGINFOD-SIGNATURE");
+    if (!hdr_ima_sig || 1 != sscanf(hdr_ima_sig, "X-DEBUGINFOD-SIGNATURE: %s[^]", sig_buf)){
+      rc = -1;
+      goto exit_validate;
+    }
+
+    // Convert the hex signature to bin
+    size_t bin_sig_len = strlen(sig_buf)/2;
+    unsigned char bin_sig[MAX_SIGNATURE_SIZE/2];
+    for (size_t b = 0; b < bin_sig_len; b++)
+      bin_sig[b] = (hex2dec(sig_buf[2*b]) << 4) | hex2dec(sig_buf[2*b+1]);
+
+    // Compute the binary SHA256 digest of the cached file (with file descriptor fd)
+    ctx = EVP_MD_CTX_new();
+    int hash_algo = imaevm_hash_algo_from_sig(bin_sig + 1);
+    const EVP_MD *md = EVP_get_digestbyname(imaevm_hash_algo_by_id(hash_algo));
+    if (!ctx || !md || !EVP_DigestInit(ctx, md)){
+      rc = -1;
+      goto exit_validate;
+    }
+
+    long data_len;
+    char* hdr_data_len = strcasestr(c->winning_headers, "X-DEBUGINFOD-SIZE");
+    if (!hdr_data_len || 1 != sscanf(hdr_data_len, "X-DEBUGINFOD-SIZE: %ld[^]", &data_len)){
+      rc = -1;
+      goto exit_validate;
+    }
+
+    file_data = malloc(data_len);
+    if (!file_data || data_len != pread(fd, file_data, data_len, 0)){
+      rc = -1;
+      goto exit_validate;
+    }
+
+    uint8_t bin_dig[MAX_DIGEST_SIZE];
+    unsigned int bin_dig_len;
+    if (!EVP_DigestUpdate(ctx, file_data, data_len) || !EVP_DigestFinal(ctx, bin_dig, &bin_dig_len)){
+      rc = -1;
+      goto exit_validate;
+    }
+
+    // Load the public x509 DER format certificate(s) from the ':' seperate env var
+    imaevm_params.verbose = 0;
+    char *certificates = getenv(DEBUGINFOD_IMA_CERT_PATHS_ENV_VAR);
+    if (!certificates){
+      rc = no_key;
+      goto exit_validate;
+    }
+    char* cert;
+    if (vfd >= 0) dprintf (vfd, "Loading certificates from: %s\n", certificates);
+    for(cert = strtok(certificates, ":"); cert != NULL; cert = strtok(NULL, ":"))
+      init_public_keys(cert);
+
+    rc = ima_verify_signature(tmp_path, bin_sig, bin_sig_len, bin_dig, bin_dig_len);
+    exit_validate:
+    free(file_data);
+    EVP_MD_CTX_free(ctx);
+  #endif
+  return rc;
 }
 
 /* Query each of the server URLs found in $DEBUGINFOD_URLS for the file
@@ -1393,7 +1488,49 @@ debuginfod_query_server (debuginfod_client *c,
 
   /* PR27571: make cache files casually unwriteable; dirs are already 0700 */
   (void) fchmod(fd, 0400);
-                
+
+  char *imapolicy_envvar = getenv(DEBUGINFOD_IMA_POLICY_ENV_VAR);
+  enum policy{pol_ignore, pol_default, pol_require, pol_undefined};
+  char *policies[4] = {"ignore", "default", "require", "undefined"};
+
+  enum policy pol = pol_undefined;
+  if(imapolicy_envvar != NULL)
+    for(pol = pol_ignore;
+        pol <= pol_undefined && strcmp(imapolicy_envvar, policies[pol]);
+        pol++);
+
+  if(pol == pol_default || pol == pol_undefined){
+    int result = debuginfod_validate_imasig(c, target_cache_tmppath, fd);
+    switch (result){
+    case valid_sig:
+      if (vfd >= 0) dprintf (vfd, "the signature is valid\n");
+      break;
+    case invalid_sig:
+      if (vfd >= 0) dprintf (vfd, "ALERT: this download is being rejected since the IMA signature could not be verified\n");
+      rc = -EACCES;
+      goto out2;
+    case skipped_sig:
+    case no_key:
+    default:
+    if (vfd >= 0) dprintf (vfd, "the signature could not be verified\n");
+      break;
+    }
+  }else if(pol == pol_require){
+    int result = debuginfod_validate_imasig(c, target_cache_tmppath, fd);
+    switch (result){
+    case valid_sig:
+      if (vfd >= 0) dprintf (vfd, "the signature is valid\n");
+      break;
+    case invalid_sig:
+    case skipped_sig:
+    case no_key:
+    default:
+      if (vfd >= 0) dprintf (vfd, "ALERT: this download is being rejected since the IMA signature could not be verified\n");
+      rc = -EACCES;
+      goto out2;
+    }
+  }
+
   /* rename tmp->real */
   rc = rename (target_cache_tmppath, target_cache_path);
   if (rc < 0)

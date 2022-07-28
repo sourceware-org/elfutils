@@ -600,6 +600,16 @@ case "$ac_cv_search__obstack_free" in
 esac
 AC_SUBST([obstack_LIBS])
 
+AC_CHECK_LIB(rpm, headerFormat, [
+  AC_DEFINE([HAVE_RPM], [1], [Define if you have RPM]),
+  AC_SUBST(rpm_LIBS, '-lrpm -lrpmio')
+])
+
+AC_CHECK_LIB(imaevm, ima_verify_signature, [
+  AC_DEFINE([HAVE_IMAEVM], [1], [Define if you have imaevm]),
+  AC_SUBST(imaevm_LIBS, '-limaevm -lcrypto')
+])
+
 dnl The directories with content.
 
 dnl Documentation.
