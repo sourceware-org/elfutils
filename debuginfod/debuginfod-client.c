@@ -100,7 +100,7 @@ void debuginfod_end (debuginfod_client *c) { }
 
 #include <pthread.h>
 
-#ifdef HAVE_IMAEVM
+#if defined(HAVE_IMAEVM) && defined(HAVE_CRYPTO)
   #include <imaevm.h>
   #include <openssl/evp.h>
   static inline unsigned char hex2dec(char c)
@@ -548,7 +548,7 @@ debuginfod_validate_imasig (debuginfod_client *c, const char* tmp_path, int fd)
   (void) tmp_path;
   (void) fd;
   int rc = skipped_sig;
-  #ifdef HAVE_IMAEVM
+  #if defined(HAVE_IMAEVM) && defined(HAVE_CRYPTO)
     int vfd = c->verbose_fd;
     char* file_data = NULL;
     EVP_MD_CTX *ctx = NULL;
@@ -558,8 +558,8 @@ debuginfod_validate_imasig (debuginfod_client *c, const char* tmp_path, int fd)
     }
     // Extract the HEX IMA-signature from the header
     char sig_buf[MAX_SIGNATURE_SIZE];
-    char* hdr_ima_sig = strcasestr(c->winning_headers, "X-DEBUGINFOD-SIGNATURE");
-    if (!hdr_ima_sig || 1 != sscanf(hdr_ima_sig, "X-DEBUGINFOD-SIGNATURE: %s[^]", sig_buf)){
+    char* hdr_ima_sig = strcasestr(c->winning_headers, "X-DEBUGINFOD-IMASIGNATURE");
+    if (!hdr_ima_sig || 1 != sscanf(hdr_ima_sig, "X-DEBUGINFOD-IMASIGNATURE: %s[^]", sig_buf)){
       rc = -1;
       goto exit_validate;
     }

@@ -601,13 +601,18 @@ esac
 AC_SUBST([obstack_LIBS])
 
 AC_CHECK_LIB(rpm, headerFormat, [
-  AC_DEFINE([HAVE_RPM], [1], [Define if you have RPM]),
+  AC_DEFINE([HAVE_RPM], [1], [Define if you have RPM])
   AC_SUBST(rpm_LIBS, '-lrpm -lrpmio')
 ])
 
 AC_CHECK_LIB(imaevm, ima_verify_signature, [
-  AC_DEFINE([HAVE_IMAEVM], [1], [Define if you have imaevm]),
-  AC_SUBST(imaevm_LIBS, '-limaevm -lcrypto')
+  AC_DEFINE([HAVE_IMAEVM], [1], [Define if you have imaevm])
+  AC_SUBST(imaevm_LIBS, '-limaevm')
+])
+
+AC_CHECK_LIB(crypto, EVP_MD_CTX_new, [
+  AC_DEFINE([HAVE_CRYPTO], [1], [Define if you have crypto])
+  AC_SUBST(crypto_LIBS, '-lcrypto')
 ])
 
 dnl The directories with content.

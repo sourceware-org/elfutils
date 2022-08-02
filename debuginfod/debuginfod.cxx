@@ -1664,6 +1664,7 @@ handle_buildid_r_match (bool internal_req_p,
     if(sig && idx != -1){
       if(verbose) obatched(clog) << "Found IMA signature for " << b_source1 << ":\n" << sig << endl;
       ima_sig = sig;
+      inc_metric("http_responses_total","extra","ima-sigs-extracted");
     }else{
       if(verbose) obatched(clog) << "Could not find IMA signature for " << b_source1 << endl;
     }
@@ -1704,7 +1705,7 @@ handle_buildid_r_match (bool internal_req_p,
 			       to_string(fs.st_size).c_str());
       add_mhd_response_header (r, "X-DEBUGINFOD-ARCHIVE", b_source0.c_str());
       add_mhd_response_header (r, "X-DEBUGINFOD-FILE", b_source1.c_str());
-      if(!ima_sig.empty()) add_mhd_response_header(r, "X-DEBUGINFOD-SIGNATURE", ima_sig.c_str());
+      if(!ima_sig.empty()) add_mhd_response_header(r, "X-DEBUGINFOD-IMASIGNATURE", ima_sig.c_str());
       add_mhd_last_modified (r, fs.st_mtime);
       if (verbose > 1)
         obatched(clog) << "serving fdcache archive " << b_source0 << " file " << b_source1 << endl;
@@ -1853,7 +1854,7 @@ handle_buildid_r_match (bool internal_req_p,
           add_mhd_response_header (r, "X-DEBUGINFOD-ARCHIVE",
                                    b_source0.c_str());
           add_mhd_response_header (r, "X-DEBUGINFOD-FILE", file.c_str());
-          if(!ima_sig.empty()) add_mhd_response_header(r, "X-DEBUGINFOD-SIGNATURE", ima_sig.c_str());
+          if(!ima_sig.empty()) add_mhd_response_header(r, "X-DEBUGINFOD-IMASIGNATURE", ima_sig.c_str());
           add_mhd_last_modified (r, archive_entry_mtime(e));
           if (verbose > 1)
             obatched(clog) << "serving archive " << b_source0 << " file " << b_source1 << endl;

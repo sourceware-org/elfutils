@@ -16,14 +16,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+. $srcdir/debuginfod-subr.sh
+
 type evmctl 2>/dev/null || (echo "need imaevm"; exit 77)
 type rpm 2>/dev/null || (echo "need rpm"; exit 77)
 type openssl 2>/dev/null || (echo "need openssl"; exit 77)
 [ `ldconfig -p | grep libimaevm | wc -l` -gt 0 ] || (echo "need libimaevm"; exit 77)
 [ `ldconfig -p | grep librpm | wc -l` -gt 0 ] || (echo "need librpm"; exit 77)
 [ `ldconfig -p | grep librpmio | wc -l` -gt 0 ] || (echo "need librpmio"; exit 77)
-
-. $srcdir/debuginfod-subr.sh
 
 DB=${PWD}/.debuginfod_tmp.sqlite
 tempfiles $DB
@@ -129,6 +129,9 @@ wait_ready $PORT1 'thread_busy{role="scan"}' 0
 RC=0
 testrun ${abs_top_builddir}/debuginfod/debuginfod-find executable $RPM_BUILDID || RC=1
 test $RC -ne 0
+
+# Test 5: Only tests 1,2 will result in extracted signature
+[[ $(curl -s http://127.0.0.1:$PORT1/metrics | grep 'http_responses_total{extra="ima-sigs-extracted"}' | awk '{print $NF}') -eq 2 ]]
 
 kill $PID1
 wait $PID1
