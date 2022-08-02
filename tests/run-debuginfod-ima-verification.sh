@@ -24,6 +24,8 @@ type openssl 2>/dev/null || (echo "need openssl"; exit 77)
 [ `ldconfig -p | grep libimaevm | wc -l` -gt 0 ] || (echo "need libimaevm"; exit 77)
 [ `ldconfig -p | grep librpm | wc -l` -gt 0 ] || (echo "need librpm"; exit 77)
 [ `ldconfig -p | grep librpmio | wc -l` -gt 0 ] || (echo "need librpmio"; exit 77)
+[ `ldconfig -p | grep libcrypto | wc -l` -gt 0 ] || (echo "need libcrypto"; exit 77)
+
 
 DB=${PWD}/.debuginfod_tmp.sqlite
 tempfiles $DB
