@@ -601,16 +601,10 @@ esac
 AC_SUBST([obstack_LIBS])
 
 enable_ima_verification="x"
-PKG_CHECK_MODULES([rpm],[rpm >= 4.16],[enable_librpm=yes],[])
-if test "x$enable_librpm" = "xyes"; then
-  AC_CHECK_LIB(rpm, headerFormat, [
-    # AC_DEFINE([HAVE_RPM], [1], [Define if you have RPM])
-    enable_ima_verification=$enable_ima_verification"rpm"
-    AC_SUBST(rpm_LIBS, '-lrpm -lrpmio')
-  ])
-else
-  AC_MSG_ERROR([Suitable version of rpm not found])
-fi
+AC_CHECK_LIB(rpm, headerFormat, [
+  enable_ima_verification=$enable_ima_verification"rpm"
+  AC_SUBST(rpm_LIBS, '-lrpm -lrpmio')
+])
 
 AC_CHECK_LIB(imaevm, ima_verify_signature, [
   enable_ima_verification=$enable_ima_verification"imaevm"
