@@ -600,20 +600,31 @@ case "$ac_cv_search__obstack_free" in
 esac
 AC_SUBST([obstack_LIBS])
 
-AC_CHECK_LIB(rpm, headerFormat, [
-  AC_DEFINE([HAVE_RPM], [1], [Define if you have RPM])
-  AC_SUBST(rpm_LIBS, '-lrpm -lrpmio')
-])
+enable_ima_verification="x"
+PKG_CHECK_MODULES([rpm],[rpm >= 4.16],[enable_librpm=yes],[])
+if test "x$enable_librpm" = "xyes"; then
+  AC_CHECK_LIB(rpm, headerFormat, [
+    # AC_DEFINE([HAVE_RPM], [1], [Define if you have RPM])
+    enable_ima_verification=$enable_ima_verification"rpm"
+    AC_SUBST(rpm_LIBS, '-lrpm -lrpmio')
+  ])
+else
+  AC_MSG_ERROR([Suitable version of rpm not found])
+fi
 
 AC_CHECK_LIB(imaevm, ima_verify_signature, [
-  AC_DEFINE([HAVE_IMAEVM], [1], [Define if you have imaevm])
+  enable_ima_verification=$enable_ima_verification"imaevm"
   AC_SUBST(imaevm_LIBS, '-limaevm')
 ])
 
 AC_CHECK_LIB(crypto, EVP_MD_CTX_new, [
-  AC_DEFINE([HAVE_CRYPTO], [1], [Define if you have crypto])
+  enable_ima_verification=$enable_ima_verification"crypto"
   AC_SUBST(crypto_LIBS, '-lcrypto')
 ])
+
+if test "$enable_ima_verification" = "xrpmimaevmcrypto"; then
+  AC_DEFINE([ENABLE_IMA_VERIFICATION], [1], [Define if the required ima verification libraries are available])
+fi
 
 dnl The directories with content.
 

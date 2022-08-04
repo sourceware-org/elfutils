@@ -1,6 +1,6 @@
 2022-07-13  Ryan Goldberg  <rgoldber@redhat.com>
 
-	* configure.ac (HAVE_RPM, HAVE_IMAEVM, HAVE_CRYPTO): Look for librpm, libimaevm and libcrypto
+	* configure.ac (ENABLE_IMA_VERIFICATION): Look for librpm, libimaevm and libcrypto
 
 2022-07-13  Mark Wielaard  <mark@klomp.org>
 

@@ -100,7 +100,7 @@ void debuginfod_end (debuginfod_client *c) { }
 
 #include <pthread.h>
 
-#if defined(HAVE_IMAEVM) && defined(HAVE_CRYPTO)
+#ifdef ENABLE_IMA_VERIFICATION
   #include <imaevm.h>
   #include <openssl/evp.h>
   static inline unsigned char hex2dec(char c)
@@ -548,7 +548,7 @@ debuginfod_validate_imasig (debuginfod_client *c, const char* tmp_path, int fd)
   (void) tmp_path;
   (void) fd;
   int rc = skipped_sig;
-  #if defined(HAVE_IMAEVM) && defined(HAVE_CRYPTO)
+  #ifdef ENABLE_IMA_VERIFICATION
     int vfd = c->verbose_fd;
     char* file_data = NULL;
     EVP_MD_CTX *ctx = NULL;

@@ -19,14 +19,14 @@
 . $srcdir/debuginfod-subr.sh
 
 type rpmsign 2>/dev/null || { echo "need rpmsign"; exit 77; }
-cat << EoF > include.c 
+cat << EoF > include.c
 #include <rpm/rpmlib.h>
 #include <rpm/rpmfi.h>
 #include <rpm/header.h>
 #include <imaevm.h>
 #include <openssl/evp.h>
 EoF
-tempfiles include.c 
+tempfiles include.c
 gcc -H -fsyntax-only include.c 2> /dev/null || { echo "one or more devel packages are missing (rpm-devel, ima-evm-utils-devel, openssl-devel)"; exit 77; }
 
 DB=${PWD}/.debuginfod_tmp.sqlite

@@ -94,7 +94,7 @@ using namespace std;
 
 #include <microhttpd.h>
 
-#ifdef HAVE_RPM
+#ifdef ENABLE_IMA_VERIFICATION
   #include <rpm/rpmlib.h>
   #include <rpm/rpmfi.h>
   #include <rpm/header.h>
@@ -1635,7 +1635,7 @@ handle_buildid_r_match (bool internal_req_p,
 
   // Extract the IMA per-file signature (if it exists)
   string ima_sig = "";
-  #ifdef HAVE_RPM
+  #ifdef ENABLE_IMA_VERIFICATION
   do{
     FD_t rpm_fd;
     if(!(rpm_fd = Fopen(b_source0.c_str(), "r.ufdio"))){
@@ -1670,6 +1670,7 @@ handle_buildid_r_match (bool internal_req_p,
     }
 
     free(hex_sig_array);
+    headerFree(rpm_hdr);
     rpmfiFree(hdr_fi);
     Fclose(rpm_fd);
   }while(false);
