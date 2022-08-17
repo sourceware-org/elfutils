@@ -600,6 +600,11 @@ case "$ac_cv_search__obstack_free" in
 esac
 AC_SUBST([obstack_LIBS])
 
+AC_CHECK_LIB(json-c, json_object_array_add, [
+  AC_DEFINE([HAVE_JSON_C], [1], [Define if json-c is on the machine])
+  AC_SUBST(jsonc_LIBS, '-ljson-c')
+])
+
 dnl The directories with content.
 
 dnl Documentation.

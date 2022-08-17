@@ -55,6 +55,8 @@ int debuginfod_find_executable (debuginfod_client *c, const unsigned char *b,
                                 int s, char **p) { return -ENOSYS; }
 int debuginfod_find_source (debuginfod_client *c, const unsigned char *b,
                             int s, const char *f, char **p)  { return -ENOSYS; }
+int debuginfod_find_metadata (debuginfod_client *c,
+                                const char* p, char** m) { return -ENOSYS; }
 void debuginfod_set_progressfn(debuginfod_client *c,
 			       debuginfod_progressfn_t fn) { }
 void debuginfod_set_verbose_fd(debuginfod_client *c, int fd) { }
@@ -99,6 +101,10 @@ void debuginfod_end (debuginfod_client *c) { }
 #endif
 
 #include <pthread.h>
+
+#ifdef HAVE_JSON_C
+  #include <json-c/json.h>
+#endif
 
 static pthread_once_t init_control = PTHREAD_ONCE_INIT;
 
@@ -198,6 +204,9 @@ struct handle_data
   /* Response http headers for this client handle, sent from the server */
   char *response_data;
   size_t response_data_size;
+  /* Response metadata values for this client handle, sent from the server */
+  char *metadata;
+  size_t metadata_size;
 };
 
 static size_t
@@ -504,18 +513,9 @@ header_callback (char * buffer, size_t size, size_t numitems, void * userdata)
   /* Temporary buffer for realloc */
   char *temp = NULL;
   struct handle_data *data = (struct handle_data *) userdata;
-  if (data->response_data == NULL)
-    {
-      temp = malloc(numitems+1);
-      if (temp == NULL)
-        return 0;
-    }
-  else
-    {
-      temp = realloc(data->response_data, data->response_data_size + numitems + 1);
-      if (temp == NULL)
-        return 0;
-    }
+  temp = realloc(data->response_data, data->response_data_size + numitems + 1);
+  if (temp == NULL)
+    return 0;
 
   memcpy(temp + data->response_data_size, buffer, numitems);
   data->response_data = temp;
@@ -524,13 +524,345 @@ header_callback (char * buffer, size_t size, size_t numitems, void * userdata)
   return numitems;
 }
 
+#ifdef HAVE_JSON_C
+static size_t
+metadata_callback (char * buffer, size_t size, size_t numitems, void * userdata)
+{
+  if (size != 1)
+    return 0;
+  /* Temporary buffer for realloc */
+  char *temp = NULL;
+  struct handle_data *data = (struct handle_data *) userdata;
+  temp = realloc(data->metadata, data->metadata_size + numitems + 1);
+  if (temp == NULL)
+    return 0;
+
+  memcpy(temp + data->metadata_size, buffer, numitems);
+  data->metadata = temp;
+  data->metadata_size += numitems;
+  data->metadata[data->metadata_size] = '\0';
+  return numitems;
+}
+#endif
+
+
+/* This function takes a copy of DEBUGINFOD_URLS, server_urls, and seperates it into an
+ * array of urls to query. The url_subdir is either 'buildid' or 'metadata', corresponding
+ * to the query type. Returns 0 on success and -Posix error on faliure.
+ */
+int
+init_server_urls(char* url_subdir, char *server_urls, char ***server_url_list, int *num_urls, int vfd)
+{
+  /* Initialize the memory to zero */
+  char *strtok_saveptr;
+  char *server_url = strtok_r(server_urls, url_delim, &strtok_saveptr);
+  /* Count number of URLs.  */
+  int n = 0;
+  assert(0 == strcmp(url_subdir, "buildid") || 0 == strcmp(url_subdir, "metadata"));
+
+  /* PR 27983: If the url is already set to be used use, skip it */
+  while (server_url != NULL)
+  {
+    int r;
+    char *tmp_url;
+    if (strlen(server_url) > 1 && server_url[strlen(server_url)-1] == '/')
+      r = asprintf(&tmp_url, "%s%s", server_url, url_subdir);
+    else
+      r = asprintf(&tmp_url, "%s/%s", server_url, url_subdir);
+
+    if (r == -1)
+      {
+        return -ENOMEM;
+      }
+    int url_index;
+    for (url_index = 0; url_index < n; ++url_index)
+      {
+        if(strcmp(tmp_url, (*server_url_list)[url_index]) == 0)
+          {
+            url_index = -1;
+            break;
+          }
+      }
+    if (url_index == -1)
+      {
+        if (vfd >= 0)
+          dprintf(vfd, "duplicate url: %s, skipping\n", tmp_url);
+        free(tmp_url);
+      }
+    else
+      {
+        n++;
+        char ** realloc_ptr;
+        realloc_ptr = reallocarray(*server_url_list, n,
+                                        sizeof(char*));
+        if (realloc_ptr == NULL)
+          {
+            free (tmp_url);
+            return -ENOMEM;
+          }
+        *server_url_list = realloc_ptr;
+        (*server_url_list)[n-1] = tmp_url;
+      }
+    server_url = strtok_r(NULL, url_delim, &strtok_saveptr);
+  }
+  *num_urls = n;
+  return 0;
+}
+
+/* Some boilerplate for checking curl_easy_setopt.  */
+#define curl_easy_setopt_ck(H,O,P) do {			\
+      CURLcode curl_res = curl_easy_setopt (H,O,P);	\
+      if (curl_res != CURLE_OK)				\
+	    {						\
+	      if (vfd >= 0)					\
+	        dprintf (vfd,				\
+            "Bad curl_easy_setopt: %s\n",	\
+		      curl_easy_strerror(curl_res));	\
+	      return -EINVAL;					\
+	    }						\
+      } while (0)
+
+
+/*
+ * This function initializes a CURL handle. It takes optional callbacks for the write
+ * function and the header function, which if defined will use userdata of type struct handle_data*.
+ * Specifically the data[i] within an array of struct handle_data's.
+ * Returns 0 on success and -Posix error on faliure.
+ */
+int
+init_handle(debuginfod_client *client,
+  size_t (*w_callback)(char *buffer,size_t size,size_t nitems,void *userdata),
+  size_t (*h_callback)(char *buffer,size_t size,size_t nitems,void *userdata),
+  struct handle_data *data, int i, long timeout,
+  int vfd)
+{
+  data->handle = curl_easy_init();
+  if (data->handle == NULL)
+  {
+    return -ENETUNREACH;
+  }
+
+  if (vfd >= 0)
+    dprintf (vfd, "url %d %s\n", i, data->url);
+
+  /* Only allow http:// + https:// + file:// so we aren't being
+    redirected to some unsupported protocol.  */
+  curl_easy_setopt_ck(data->handle, CURLOPT_PROTOCOLS,
+    (CURLPROTO_HTTP | CURLPROTO_HTTPS | CURLPROTO_FILE));
+  curl_easy_setopt_ck(data->handle, CURLOPT_URL, data->url);
+  if (vfd >= 0)
+    curl_easy_setopt_ck(data->handle, CURLOPT_ERRORBUFFER,
+      data->errbuf);
+  if(w_callback) {
+    curl_easy_setopt_ck(data->handle,
+      CURLOPT_WRITEFUNCTION, w_callback);
+    curl_easy_setopt_ck(data->handle, CURLOPT_WRITEDATA, data);
+  }
+  if (timeout > 0)
+  {
+    /* Make sure there is at least some progress,
+      try to get at least 100K per timeout seconds.  */
+    curl_easy_setopt_ck (data->handle, CURLOPT_LOW_SPEED_TIME,
+            timeout);
+    curl_easy_setopt_ck (data->handle, CURLOPT_LOW_SPEED_LIMIT,
+            100 * 1024L);
+  }
+  data->response_data = NULL;
+  data->response_data_size = 0;
+  curl_easy_setopt_ck(data->handle, CURLOPT_FILETIME, (long) 1);
+  curl_easy_setopt_ck(data->handle, CURLOPT_FOLLOWLOCATION, (long) 1);
+  curl_easy_setopt_ck(data->handle, CURLOPT_FAILONERROR, (long) 1);
+  curl_easy_setopt_ck(data->handle, CURLOPT_NOSIGNAL, (long) 1);
+  if(h_callback){
+    curl_easy_setopt_ck(data->handle,
+      CURLOPT_HEADERFUNCTION, h_callback);
+    curl_easy_setopt_ck(data->handle, CURLOPT_HEADERDATA, data);
+  }
+  #if LIBCURL_VERSION_NUM >= 0x072a00 /* 7.42.0 */
+  curl_easy_setopt_ck(data->handle, CURLOPT_PATH_AS_IS, (long) 1);
+  #else
+  /* On old curl; no big deal, canonicalization here is almost the
+      same, except perhaps for ? # type decorations at the tail. */
+  #endif
+  curl_easy_setopt_ck(data->handle, CURLOPT_AUTOREFERER, (long) 1);
+  curl_easy_setopt_ck(data->handle, CURLOPT_ACCEPT_ENCODING, "");
+  curl_easy_setopt_ck(data->handle, CURLOPT_HTTPHEADER, client->headers);
+
+  return 0;
+}
+
+
+/*
+ * This function busy-waits on one or more curl queries to complete. This can
+ * be controled via only_one, which, if true, will find the first winner and exit
+ * once found. If positive maxtime and maxsize dictate the maximum allowed wait times
+ * and download sizes respectivly. Returns 0 on success and -Posix error on faliure.
+ */
+int
+perform_queries(CURLM *curlm, CURL **target_handle, struct handle_data *data, debuginfod_client *c,
+  int num_urls, long maxtime, long maxsize, bool only_one, int vfd)
+{
+  int still_running = -1;
+  long loops = 0;
+  int committed_to = -1;
+  bool verbose_reported = false;
+  struct timespec start_time, cur_time;
+  if (c->winning_headers != NULL)
+    {
+      free (c->winning_headers);
+      c->winning_headers = NULL;
+    }
+  if ( maxtime > 0 && clock_gettime(CLOCK_MONOTONIC_RAW, &start_time) == -1)
+  {
+    return errno;
+  }
+  long delta = 0;
+  do
+  {
+    /* Check to see how long querying is taking. */
+    if (maxtime > 0)
+    {
+      if (clock_gettime(CLOCK_MONOTONIC_RAW, &cur_time) == -1)
+      {
+        return errno;
+      }
+      delta = cur_time.tv_sec - start_time.tv_sec;
+      if ( delta >  maxtime)
+      {
+        dprintf(vfd, "Timeout with max time=%lds and transfer time=%lds\n", maxtime, delta );
+        return -ETIME;
+      }
+    }
+    /* Wait 1 second, the minimum DEBUGINFOD_TIMEOUT.  */
+    curl_multi_wait(curlm, NULL, 0, 1000, NULL);
+    CURLMcode curlm_res = curl_multi_perform(curlm, &still_running);
+
+    if(only_one){
+      /* If the target file has been found, abort the other queries.  */
+      if (target_handle && *target_handle != NULL)
+      {
+        for (int i = 0; i < num_urls; i++)
+          if (data[i].handle != *target_handle)
+            curl_multi_remove_handle(curlm, data[i].handle);
+          else
+          {
+            committed_to = i;
+            if (c->winning_headers == NULL)
+            {
+              c->winning_headers = data[committed_to].response_data;
+              if (vfd >= 0 && c->winning_headers != NULL)
+                dprintf(vfd, "\n%s", c->winning_headers);
+              data[committed_to].response_data = NULL;
+              data[committed_to].response_data_size = 0;
+            }
+          }
+      }
+
+      if (vfd >= 0 && !verbose_reported && committed_to >= 0)
+      {
+        bool pnl = (c->default_progressfn_printed_p && vfd == STDERR_FILENO);
+        dprintf (vfd, "%scommitted to url %d\n", pnl ? "\n" : "",
+          committed_to);
+        if (pnl)
+          c->default_progressfn_printed_p = 0;
+        verbose_reported = true;
+      }
+    }
+
+    if (curlm_res != CURLM_OK)
+    {
+      switch (curlm_res)
+      {
+      case CURLM_CALL_MULTI_PERFORM: continue;
+      case CURLM_OUT_OF_MEMORY: return -ENOMEM;
+      default: return -ENETUNREACH;
+      }
+    }
+
+    long dl_size = 0;
+    if(only_one && target_handle){ // Only bother with progress functions if we're retrieving exactly 1 file
+      if (*target_handle && (c->progressfn || maxsize > 0))
+      {
+        /* Get size of file being downloaded. NB: If going through
+            deflate-compressing proxies, this number is likely to be
+            unavailable, so -1 may show. */
+        CURLcode curl_res;
+#ifdef CURLINFO_CONTENT_LENGTH_DOWNLOAD_T
+        curl_off_t cl;
+        curl_res = curl_easy_getinfo(*target_handle,
+                                      CURLINFO_CONTENT_LENGTH_DOWNLOAD_T,
+                                      &cl);
+        if (curl_res == CURLE_OK && cl >= 0)
+          dl_size = (cl > LONG_MAX ? LONG_MAX : (long)cl);
+#else
+        double cl;
+        curl_res = curl_easy_getinfo(*target_handle,
+                                      CURLINFO_CONTENT_LENGTH_DOWNLOAD,
+                                      &cl);
+        if (curl_res == CURLE_OK)
+          dl_size = (cl >= (double)(LONG_MAX+1UL) ? LONG_MAX : (long)cl);
+#endif
+        /* If Content-Length is -1, try to get the size from
+            X-Debuginfod-Size */
+        if (dl_size == -1 && c->winning_headers != NULL)
+        {
+          long xdl;
+          char *hdr = strcasestr(c->winning_headers, "x-debuginfod-size");
+
+          if (hdr != NULL
+              && sscanf(hdr, "x-debuginfod-size: %ld", &xdl) == 1)
+            dl_size = xdl;
+        }
+      }
+
+      if (c->progressfn) /* inform/check progress callback */
+      {
+        loops ++;
+        long pa = loops; /* default param for progress callback */
+        if (*target_handle) /* we've committed to a server; report its download progress */
+        {
+          CURLcode curl_res;
+#ifdef CURLINFO_SIZE_DOWNLOAD_T
+          curl_off_t dl;
+          curl_res = curl_easy_getinfo(*target_handle,
+                                        CURLINFO_SIZE_DOWNLOAD_T,
+                                        &dl);
+          if (curl_res == 0 && dl >= 0)
+            pa = (dl > LONG_MAX ? LONG_MAX : (long)dl);
+#else
+          double dl;
+          curl_res = curl_easy_getinfo(*target_handle,
+                                        CURLINFO_SIZE_DOWNLOAD,
+                                        &dl);
+          if (curl_res == 0)
+            pa = (dl >= (double)(LONG_MAX+1UL) ? LONG_MAX : (long)dl);
+#endif
+
+        }
+
+        if ((*c->progressfn) (c, pa, dl_size))
+          break;
+      }
+    }
+    /* Check to see if we are downloading something which exceeds maxsize, if set.*/
+    if (target_handle && *target_handle && dl_size > maxsize && maxsize > 0)
+    {
+      if (vfd >=0)
+        dprintf(vfd, "Content-Length too large.\n");
+      return -EFBIG;
+    }
+  } while (still_running);
+  return 0;
+}
+
+
 /* Query each of the server URLs found in $DEBUGINFOD_URLS for the file
    with the specified build-id, type (debuginfo, executable or source)
    and filename. filename may be NULL. If found, return a file
    descriptor for the target, otherwise return an error code.
 */
 static int
-debuginfod_query_server (debuginfod_client *c,
+debuginfod_query_server_by_buildid (debuginfod_client *c,
 			 const unsigned char *build_id,
                          int build_id_len,
                          const char *type,
@@ -549,7 +881,7 @@ debuginfod_query_server (debuginfod_client *c,
   char suffix[PATH_MAX + 1]; /* +1 for zero terminator.  */
   char build_id_bytes[MAX_BUILD_ID_BYTES * 2 + 1];
   int vfd = c->verbose_fd;
-  int rc;
+  int rc, r;
 
   if (vfd >= 0)
     {
@@ -856,60 +1188,14 @@ debuginfod_query_server (debuginfod_client *c,
       goto out0;
     }
 
-  /* Initialize the memory to zero */
-  char *strtok_saveptr;
   char **server_url_list = NULL;
-  char *server_url = strtok_r(server_urls, url_delim, &strtok_saveptr);
-  /* Count number of URLs.  */
-  int num_urls = 0;
-
-  while (server_url != NULL)
-    {
-      /* PR 27983: If the url is already set to be used use, skip it */
-      char *slashbuildid;
-      if (strlen(server_url) > 1 && server_url[strlen(server_url)-1] == '/')
-        slashbuildid = "buildid";
-      else
-        slashbuildid = "/buildid";
-
-      char *tmp_url;
-      if (asprintf(&tmp_url, "%s%s", server_url, slashbuildid) == -1)
-        {
-          rc = -ENOMEM;
-          goto out1;
-        }
-      int url_index;
-      for (url_index = 0; url_index < num_urls; ++url_index)
-        {
-          if(strcmp(tmp_url, server_url_list[url_index]) == 0)
-            {
-              url_index = -1;
-              break;
-            }
-        }
-      if (url_index == -1)
-        {
-          if (vfd >= 0)
-            dprintf(vfd, "duplicate url: %s, skipping\n", tmp_url);
-          free(tmp_url);
-        }
-      else
-        {
-          num_urls++;
-          char ** realloc_ptr;
-          realloc_ptr = reallocarray(server_url_list, num_urls,
-                                         sizeof(char*));
-          if (realloc_ptr == NULL)
-            {
-              free (tmp_url);
-              rc = -ENOMEM;
-              goto out1;
-            }
-          server_url_list = realloc_ptr;
-          server_url_list[num_urls-1] = tmp_url;
-        }
-      server_url = strtok_r(NULL, url_delim, &strtok_saveptr);
-    }
+  char *server_url;
+  int num_urls;
+  r = init_server_urls("buildid", server_urls, &server_url_list, &num_urls, vfd);
+  if(0 != r){
+    rc = r;
+    goto out1;
+  }
 
   int retry_limit = default_retry_limit;
   const char* retry_limit_envvar = getenv(DEBUGINFOD_RETRY_LIMIT_ENV_VAR);
@@ -979,13 +1265,6 @@ debuginfod_query_server (debuginfod_client *c,
 
       data[i].fd = fd;
       data[i].target_handle = &target_handle;
-      data[i].handle = curl_easy_init();
-      if (data[i].handle == NULL)
-        {
-          if (filename) curl_free (escaped_string);
-          rc = -ENETUNREACH;
-          goto out2;
-        }
       data[i].client = c;
 
       if (filename) /* must start with / */
@@ -996,63 +1275,14 @@ debuginfod_query_server (debuginfod_client *c,
         }
       else
         snprintf(data[i].url, PATH_MAX, "%s/%s/%s", server_url, build_id_bytes, type);
-      if (vfd >= 0)
-	dprintf (vfd, "url %d %s\n", i, data[i].url);
 
-      /* Some boilerplate for checking curl_easy_setopt.  */
-#define curl_easy_setopt_ck(H,O,P) do {			\
-      CURLcode curl_res = curl_easy_setopt (H,O,P);	\
-      if (curl_res != CURLE_OK)				\
-	{						\
-	  if (vfd >= 0)					\
-	    dprintf (vfd,				\
-	             "Bad curl_easy_setopt: %s\n",	\
-		     curl_easy_strerror(curl_res));	\
-	  rc = -EINVAL;					\
-	  goto out2;					\
-	}						\
-      } while (0)
-
-      /* Only allow http:// + https:// + file:// so we aren't being
-	 redirected to some unsupported protocol.  */
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_PROTOCOLS,
-			  (CURLPROTO_HTTP | CURLPROTO_HTTPS | CURLPROTO_FILE));
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_URL, data[i].url);
-      if (vfd >= 0)
-	curl_easy_setopt_ck(data[i].handle, CURLOPT_ERRORBUFFER,
-			    data[i].errbuf);
-      curl_easy_setopt_ck(data[i].handle,
-			  CURLOPT_WRITEFUNCTION,
-			  debuginfod_write_callback);
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_WRITEDATA, (void*)&data[i]);
-      if (timeout > 0)
-	{
-	  /* Make sure there is at least some progress,
-	     try to get at least 100K per timeout seconds.  */
-	  curl_easy_setopt_ck (data[i].handle, CURLOPT_LOW_SPEED_TIME,
-			       timeout);
-	  curl_easy_setopt_ck (data[i].handle, CURLOPT_LOW_SPEED_LIMIT,
-			       100 * 1024L);
-	}
-      data[i].response_data = NULL;
-      data[i].response_data_size = 0;
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_FILETIME, (long) 1);
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_FOLLOWLOCATION, (long) 1);
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_FAILONERROR, (long) 1);
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_NOSIGNAL, (long) 1);
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_HEADERFUNCTION,
-			  header_callback);
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_HEADERDATA,
-			  (void *) &(data[i]));
-#if LIBCURL_VERSION_NUM >= 0x072a00 /* 7.42.0 */
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_PATH_AS_IS, (long) 1);
-#else
-      /* On old curl; no big deal, canonicalization here is almost the
-         same, except perhaps for ? # type decorations at the tail. */
-#endif
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_AUTOREFERER, (long) 1);
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_ACCEPT_ENCODING, "");
-      curl_easy_setopt_ck(data[i].handle, CURLOPT_HTTPHEADER, c->headers);
+      r = init_handle(c, debuginfod_write_callback, header_callback,
+        data+i,i, timeout, vfd);
+      if(0 != r){
+        rc = r;
+        if(filename) curl_free (escaped_string);
+        goto out2;
+      }
 
       curl_multi_add_handle(curlm, data[i].handle);
     }
@@ -1061,159 +1291,12 @@ debuginfod_query_server (debuginfod_client *c,
   /* Query servers in parallel.  */
   if (vfd >= 0)
     dprintf (vfd, "query %d urls in parallel\n", num_urls);
-  int still_running;
-  long loops = 0;
-  int committed_to = -1;
-  bool verbose_reported = false;
-  struct timespec start_time, cur_time;
-  if (c->winning_headers != NULL)
-    {
-      free (c->winning_headers);
-      c->winning_headers = NULL;
-    }
-  if ( maxtime > 0 && clock_gettime(CLOCK_MONOTONIC_RAW, &start_time) == -1)
-    {
-      rc = errno;
-      goto out2;
-    }
-  long delta = 0;
-  do
-    {
-      /* Check to see how long querying is taking. */
-      if (maxtime > 0)
-        {
-          if (clock_gettime(CLOCK_MONOTONIC_RAW, &cur_time) == -1)
-            {
-              rc = errno;
-              goto out2;
-            }
-          delta = cur_time.tv_sec - start_time.tv_sec;
-          if ( delta >  maxtime)
-            {
-              dprintf(vfd, "Timeout with max time=%lds and transfer time=%lds\n", maxtime, delta );
-              rc = -ETIME;
-              goto out2;
-            }
-        }
-      /* Wait 1 second, the minimum DEBUGINFOD_TIMEOUT.  */
-      curl_multi_wait(curlm, NULL, 0, 1000, NULL);
-      CURLMcode curlm_res = curl_multi_perform(curlm, &still_running);
 
-      /* If the target file has been found, abort the other queries.  */
-      if (target_handle != NULL)
-	{
-	  for (int i = 0; i < num_urls; i++)
-	    if (data[i].handle != target_handle)
-	      curl_multi_remove_handle(curlm, data[i].handle);
-	    else
-              {
-	        committed_to = i;
-                if (c->winning_headers == NULL)
-                  {
-                    c->winning_headers = data[committed_to].response_data;
-                    if (vfd >= 0 && c->winning_headers != NULL)
-                      dprintf(vfd, "\n%s", c->winning_headers);
-                    data[committed_to].response_data = NULL;
-                    data[committed_to].response_data_size = 0;
-                  }
-
-              }
-	}
-
-      if (vfd >= 0 && !verbose_reported && committed_to >= 0)
-	{
-	  bool pnl = (c->default_progressfn_printed_p && vfd == STDERR_FILENO);
-	  dprintf (vfd, "%scommitted to url %d\n", pnl ? "\n" : "",
-		   committed_to);
-	  if (pnl)
-	    c->default_progressfn_printed_p = 0;
-	  verbose_reported = true;
-	}
-
-      if (curlm_res != CURLM_OK)
-        {
-          switch (curlm_res)
-            {
-            case CURLM_CALL_MULTI_PERFORM: continue;
-            case CURLM_OUT_OF_MEMORY: rc = -ENOMEM; break;
-            default: rc = -ENETUNREACH; break;
-            }
-          goto out2;
-        }
-
-      long dl_size = 0;
-      if (target_handle && (c->progressfn || maxsize > 0))
-        {
-          /* Get size of file being downloaded. NB: If going through
-             deflate-compressing proxies, this number is likely to be
-             unavailable, so -1 may show. */
-          CURLcode curl_res;
-#ifdef CURLINFO_CONTENT_LENGTH_DOWNLOAD_T
-          curl_off_t cl;
-          curl_res = curl_easy_getinfo(target_handle,
-                                       CURLINFO_CONTENT_LENGTH_DOWNLOAD_T,
-                                       &cl);
-          if (curl_res == CURLE_OK && cl >= 0)
-            dl_size = (cl > LONG_MAX ? LONG_MAX : (long)cl);
-#else
-          double cl;
-          curl_res = curl_easy_getinfo(target_handle,
-                                       CURLINFO_CONTENT_LENGTH_DOWNLOAD,
-                                       &cl);
-          if (curl_res == CURLE_OK)
-            dl_size = (cl >= (double)(LONG_MAX+1UL) ? LONG_MAX : (long)cl);
-#endif
-          /* If Content-Length is -1, try to get the size from
-             X-Debuginfod-Size */
-          if (dl_size == -1 && c->winning_headers != NULL)
-            {
-              long xdl;
-              char *hdr = strcasestr(c->winning_headers, "x-debuginfod-size");
-
-              if (hdr != NULL
-                  && sscanf(hdr, "x-debuginfod-size: %ld", &xdl) == 1)
-                dl_size = xdl;
-            }
-        }
-
-      if (c->progressfn) /* inform/check progress callback */
-        {
-          loops ++;
-          long pa = loops; /* default param for progress callback */
-          if (target_handle) /* we've committed to a server; report its download progress */
-            {
-              CURLcode curl_res;
-#ifdef CURLINFO_SIZE_DOWNLOAD_T
-              curl_off_t dl;
-              curl_res = curl_easy_getinfo(target_handle,
-                                           CURLINFO_SIZE_DOWNLOAD_T,
-                                           &dl);
-              if (curl_res == 0 && dl >= 0)
-                pa = (dl > LONG_MAX ? LONG_MAX : (long)dl);
-#else
-              double dl;
-              curl_res = curl_easy_getinfo(target_handle,
-                                           CURLINFO_SIZE_DOWNLOAD,
-                                           &dl);
-              if (curl_res == 0)
-                pa = (dl >= (double)(LONG_MAX+1UL) ? LONG_MAX : (long)dl);
-#endif
-
-            }
-
-          if ((*c->progressfn) (c, pa, dl_size))
-            break;
-        }
-
-      /* Check to see if we are downloading something which exceeds maxsize, if set.*/
-      if (target_handle && dl_size > maxsize && maxsize > 0)
-        {
-          if (vfd >=0)
-            dprintf(vfd, "Content-Length too large.\n");
-          rc = -EFBIG;
-          goto out2;
-        }
-    } while (still_running);
+  r = perform_queries(curlm, &target_handle,data,c, num_urls, maxtime, maxsize, true,  vfd);
+  if(0 != r){
+    rc = r;
+    goto out2;
+  }
 
   /* Check whether a query was successful. If so, assign its handle
      to verified_handle.  */
@@ -1560,7 +1643,7 @@ debuginfod_find_debuginfo (debuginfod_client *client,
 			   const unsigned char *build_id, int build_id_len,
                            char **path)
 {
-  return debuginfod_query_server(client, build_id, build_id_len,
+  return debuginfod_query_server_by_buildid(client, build_id, build_id_len,
                                  "debuginfo", NULL, path);
 }
 
@@ -1571,7 +1654,7 @@ debuginfod_find_executable(debuginfod_client *client,
 			   const unsigned char *build_id, int build_id_len,
                            char **path)
 {
-  return debuginfod_query_server(client, build_id, build_id_len,
+  return debuginfod_query_server_by_buildid(client, build_id, build_id_len,
                                  "executable", NULL, path);
 }
 
@@ -1580,10 +1663,210 @@ int debuginfod_find_source(debuginfod_client *client,
 			   const unsigned char *build_id, int build_id_len,
                            const char *filename, char **path)
 {
-  return debuginfod_query_server(client, build_id, build_id_len,
+  return debuginfod_query_server_by_buildid(client, build_id, build_id_len,
                                  "source", filename, path);
 }
 
+int debuginfod_find_metadata (debuginfod_client *client,
+			    const char* path, char** metadata)
+{
+  (void) client;
+  (void) path;
+  if(NULL == metadata) return EPERM;
+  *metadata = strdup("[ ]"); // An empty JSON array
+#ifdef HAVE_JSON_C
+  char *server_urls;
+  char *urls_envvar;
+  json_object *json_metadata = json_object_new_array();
+  int rc = 0, r;
+  int vfd = client->verbose_fd;
+
+  if(NULL == json_metadata){
+    rc = -ENOMEM;
+    goto out;
+  }
+
+  if(NULL == path){
+    rc = -ENOSYS;
+    goto out;
+  }
+
+  if (vfd >= 0)
+    dprintf (vfd, "debuginfod_find_metadata %s\n", path);
+
+  /* Without query-able URL, we can stop here*/
+  urls_envvar = getenv(DEBUGINFOD_URLS_ENV_VAR);
+  if (vfd >= 0)
+    dprintf (vfd, "server urls \"%s\"\n",
+      urls_envvar != NULL ? urls_envvar : "");
+  if (urls_envvar == NULL || urls_envvar[0] == '\0')
+  {
+    rc = -ENOSYS;
+    goto out;
+  }
+
+  /* Clear the client of previous urls*/
+  free (client->url);
+  client->url = NULL;
+
+  long maxtime = 0;
+  const char *maxtime_envvar;
+  maxtime_envvar = getenv(DEBUGINFOD_MAXTIME_ENV_VAR);
+  if (maxtime_envvar != NULL)
+    maxtime = atol (maxtime_envvar);
+  if (maxtime && vfd >= 0)
+    dprintf(vfd, "using max time %lds\n", maxtime);
+
+  long timeout = default_timeout;
+  const char* timeout_envvar = getenv(DEBUGINFOD_TIMEOUT_ENV_VAR);
+  if (timeout_envvar != NULL)
+    timeout = atoi (timeout_envvar);
+  if (vfd >= 0)
+    dprintf (vfd, "using timeout %ld\n", timeout);
+
+  add_default_headers(client);
+
+  /* make a copy of the envvar so it can be safely modified.  */
+  server_urls = strdup(urls_envvar);
+  if (server_urls == NULL)
+  {
+    rc = -ENOMEM;
+    goto out;
+  }
+  /* thereafter, goto out1 on error*/
+
+  char **server_url_list = NULL;
+  char *server_url;
+  int num_urls;
+  r = init_server_urls("metadata", server_urls, &server_url_list, &num_urls, vfd);
+  if(0 != r){
+    rc = r;
+    goto out1;
+  }
+
+  CURLM *curlm = client->server_mhandle;
+  assert (curlm != NULL);
+
+  CURL *target_handle = NULL;
+  struct handle_data *data = malloc(sizeof(struct handle_data) * num_urls);
+  if (data == NULL)
+  {
+    rc = -ENOMEM;
+    goto out1;
+  }
+
+  /* thereafter, goto out2 on error.  */
+
+
+  /* Initialize handle_data  */
+  for (int i = 0; i < num_urls; i++)
+  {
+    if ((server_url = server_url_list[i]) == NULL)
+      break;
+    if (vfd >= 0)
+      dprintf (vfd, "init server %d %s\n", i, server_url);
+
+    data[i].errbuf[0] = '\0';
+    data[i].target_handle = &target_handle;
+    data[i].client = client;
+    data[i].metadata = NULL;
+    data[i].metadata_size = 0;
+
+    // At the moment only glob path querying is supported, but leave room for
+    // future expansion
+    const char *key = "glob";
+    snprintf(data[i].url, PATH_MAX, "%s?%s=%s", server_url, key, path);
+    r = init_handle(client, metadata_callback, header_callback,
+      data+i, i, timeout, vfd);
+    if(0 != r){
+      rc = r;
+      goto out2;
+    }
+    curl_multi_add_handle(curlm, data[i].handle);
+  }
+
+  /* Query servers */
+  if (vfd >= 0)
+      dprintf (vfd, "Starting %d queries\n",num_urls);
+  r = perform_queries(curlm, NULL, data, client, num_urls, maxtime, 0, false, vfd);
+  if(0 != r){
+    rc = r;
+    goto out2;
+  }
+
+  /* NOTE: We don't check the return codes of the curl messages since
+     a metadata query failing silently is just fine. We want to know what's
+     available from servers which can be connected with no issues.
+     If running with additional verbosity, the failure will be noted in stderr */
+
+  /* Building the new json array from all the upstream data
+    and cleanup while at it
+  */
+  for (int i = 0; i < num_urls; i++)
+  {
+    curl_multi_remove_handle(curlm, data[i].handle); /* ok to repeat */
+    if(NULL == data[i].metadata)
+    {
+      if (vfd >= 0)
+        dprintf (vfd, "Query to %s failed with error message:\n\t\"%s\"\n",
+          data[i].url, data[i].errbuf);
+      continue;
+    }
+    json_object *upstream_metadata = json_tokener_parse(data[i].metadata);
+    if(NULL == upstream_metadata) continue;
+    // Combine the upstream metadata into the json array
+    for (int j = 0, n = json_object_array_length(upstream_metadata); j < n; j++) {
+        json_object *entry = json_object_array_get_idx(upstream_metadata, j);
+        json_object_get(entry); // increment reference count
+        json_object_array_add(json_metadata, entry);
+    }
+    json_object_put(upstream_metadata);
+
+    curl_easy_cleanup (data[i].handle);
+    free (data[i].response_data);
+    free (data[i].metadata);
+  }
+
+  free(*metadata);
+  *metadata = strdup(json_object_to_json_string_ext(json_metadata, JSON_C_TO_STRING_PRETTY));
+
+  free (data);
+  goto out1;
+
+/* error exits */
+out2:
+  /* remove all handles from multi */
+  for (int i = 0; i < num_urls; i++)
+  {
+    if (data[i].handle != NULL)
+    {
+      curl_multi_remove_handle(curlm, data[i].handle); /* ok to repeat */
+      curl_easy_cleanup (data[i].handle);
+      free (data[i].response_data);
+      free (data[i].metadata);
+    }
+  }
+  free(data);
+
+out1:
+  for (int i = 0; i < num_urls; ++i)
+    free(server_url_list[i]);
+  free(server_url_list);
+  free (server_urls);
+
+/* general purpose exit */
+out:
+  json_object_put(json_metadata);
+  /* Reset sent headers */
+  curl_slist_free_all (client->headers);
+  client->headers = NULL;
+  client->user_agent_set_p = 0;
+
+  return rc;
+#else
+  return -ENOSYS;
+#endif
+}
 
 /* Add an outgoing HTTP header.  */
 int debuginfod_add_http_header (debuginfod_client *client, const char* header)

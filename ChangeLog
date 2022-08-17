@@ -1,3 +1,8 @@
+2022-09-02  Ryan Goldberg <rgoldber@redhat.com>
+
+	* configure.ac (HAVE_JSON_C): Defined iff libjson-c
+	is found, and metadata querying is thus enabled.
+
 2022-04-28  Di Chen  <dichen@redhat.com>
 
 	* NEWS: Add readefl -D, --use-dynamic.

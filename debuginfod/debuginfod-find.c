@@ -31,6 +31,9 @@
 #include <gelf.h>
 #include <libdwelf.h>
 
+#ifdef HAVE_JSON_C
+  #include <json-c/json.h>
+#endif
 
 /* Name and version of program.  */
 ARGP_PROGRAM_VERSION_HOOK_DEF = print_version;
@@ -48,7 +51,8 @@ static const char args_doc[] = N_("debuginfo BUILDID\n"
                                   "executable BUILDID\n"
                                   "executable PATH\n"
                                   "source BUILDID /FILENAME\n"
-                                  "source PATH /FILENAME\n");
+                                  "source PATH /FILENAME\n"
+                                  "metadata GLOB");
 
 
 /* Definitions of arguments for argp functions.  */
@@ -138,6 +142,33 @@ main(int argc, char** argv)
       argp_help (&argp, stderr, ARGP_HELP_USAGE, argv[0]);
       return 1;
     }
+
+  if(strcmp(argv[remaining], "metadata") == 0){
+    #ifdef HAVE_JSON_C
+      if (remaining+1 == argc)
+      {
+        fprintf(stderr, "If FILETYPE is \"metadata\" then GLOB must be given\n");
+        return 1;
+      }
+
+      char* metadata;
+      int rc = debuginfod_find_metadata (client, argv[remaining+1], &metadata);
+
+      if (rc < 0)
+      {
+        fprintf(stderr, "Server query failed: %s\n", strerror(-rc));
+        return 1;
+      }
+      // Output the metadata to stdout
+      printf("%s\n", metadata);
+      free(metadata);
+      return 0;
+    #else
+      fprintf(stderr, "If FILETYPE is \"metadata\" then libjson-c must be available\n");
+      return 1;
+    #endif
+
+  }
 
   /* If we were passed an ELF file name in the BUILDID slot, look in there. */
   unsigned char* build_id = (unsigned char*) argv[remaining+1];

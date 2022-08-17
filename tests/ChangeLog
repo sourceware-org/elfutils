@@ -1,3 +1,9 @@
+2022-09-02  Ryan Goldberg <rgoldber@redhat.com>
+
+	* run-debuginfod-find-metadata.sh: New test.
+	* Makefile.am (TESTS): Add run-debuginfod-find-metadata.sh.
+	(EXTRA_DIST): Likewise.
+
 2022-08-04  Sergei Trofimovich  <slyich@gmail.com>
 
 	* low_high_pc.c (handle_die): Drop redundant 'lx' suffix.
