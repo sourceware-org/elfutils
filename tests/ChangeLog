@@ -1,3 +1,9 @@
+2022-08-26  Mark Wielaard  <mark@klomp.org>
+
+	* run-ar-N.sh: New test.
+	* Makefile.am (TESTS): Add run-ar-N.sh.
+	(EXTRA_DIST): Likewise.
+
 2022-08-04  Sergei Trofimovich  <slyich@gmail.com>
 
 	* low_high_pc.c (handle_die): Drop redundant 'lx' suffix.
