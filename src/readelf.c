@@ -308,6 +308,7 @@ static void handle_relocs_rela (Ebl *ebl, GElf_Ehdr *ehdr, Elf_Scn *scn,
 				GElf_Shdr *shdr);
 static bool print_symtab (Ebl *ebl, int type);
 static void handle_symtab (Ebl *ebl, Elf_Scn *scn, GElf_Shdr *shdr);
+static void handle_dynamic_symtab (Ebl *ebl);
 static void print_verinfo (Ebl *ebl);
 static void handle_verneed (Ebl *ebl, Elf_Scn *scn, GElf_Shdr *shdr);
 static void handle_verdef (Ebl *ebl, Elf_Scn *scn, GElf_Shdr *shdr);
@@ -327,7 +328,9 @@ enum dyn_idx
 {
   i_strsz,
   i_verneed,
+  i_verneednum,
   i_verdef,
+  i_verdefnum,
   i_versym,
   i_symtab,
   i_strtab,
@@ -2442,6 +2445,13 @@ handle_relocs_rela (Ebl *ebl, GElf_Ehdr *ehdr, Elf_Scn *scn, GElf_Shdr *shdr)
 static bool
 print_symtab (Ebl *ebl, int type)
 {
+  /* Use the dynamic section info to display symbol tables.  */
+  if (use_dynamic_segment && type == SHT_DYNSYM)
+  {
+	handle_dynamic_symtab(ebl);
+	return;
+  }
+
   /* Find the symbol table(s).  For this we have to search through the
      section table.  */
   Elf_Scn *scn = NULL;
@@ -2487,6 +2497,191 @@ print_symtab (Ebl *ebl, int type)
 
   return symtab_printed;
 }
+
+static void
+handle_dynamic_symtab (Ebl *ebl)
+{
+  GElf_Phdr *phdr = NULL;
+  /* phnum is a static variable which already fetched in function process_elf_file.  */
+  for (size_t i = 0; i < phnum; ++i) {
+    GElf_Phdr phdr_mem;
+    phdr = gelf_getphdr(ebl->elf, i, &phdr_mem);
+    if (phdr->p_type == PT_DYNAMIC) {
+      break;
+    }
+  }
+
+  GElf_Addr addrs[i_max] = {0,};
+  GElf_Off offs[i_max] = {0,};
+  get_dynscn_addrs(ebl->elf, phdr, addrs);
+  find_offsets(ebl->elf, 0, i_max, addrs, offs);
+
+  size_t syments = ((offs[i_strtab] - offs[i_symtab]) /
+    gelf_fsize(ebl->elf, ELF_T_SYM, 1, EV_CURRENT));
+
+  /* All the data chunk initializaion.  */
+  Elf_Data *symdata = NULL;
+  Elf_Data *symstrdata = NULL;
+  Elf_Data *versym_data = NULL;
+  Elf_Data *verdef_data = NULL;
+  Elf_Data *verneed_data = NULL;
+
+  symdata = elf_getdata_rawchunk(
+      ebl->elf, offs[i_symtab],
+      gelf_fsize(ebl->elf, ELF_T_SYM, syments, EV_CURRENT), ELF_T_SYM);
+  symstrdata = elf_getdata_rawchunk(ebl->elf, offs[i_strtab], addrs[i_strsz],
+                                    ELF_T_BYTE);
+  versym_data = elf_getdata_rawchunk(ebl->elf, offs[i_versym],
+                                     syments * sizeof(Elf64_Half), ELF_T_HALF);
+
+  /* Get the verneed_data without vernaux.  */
+  verneed_data = elf_getdata_rawchunk(
+      ebl->elf, offs[i_verneed], addrs[i_verneednum] * sizeof(Elf64_Verneed),
+      ELF_T_VNEED);
+  size_t vernauxnum = 0;
+  size_t vn_next_offset = 0;
+
+  for (size_t i = 0; i < addrs[i_verneednum]; i++) {
+    GElf_Verneed *verneed =
+        (GElf_Verneed *)(verneed_data->d_buf + vn_next_offset);
+    vernauxnum += verneed->vn_cnt;
+    vn_next_offset += verneed->vn_next;
+  }
+
+  /* Update the verneed_data to include the vernaux.  */
+  verneed_data = elf_getdata_rawchunk(
+      ebl->elf, offs[i_verneed],
+      (addrs[i_verneednum] + vernauxnum) * sizeof(GElf_Verneed), ELF_T_VNEED);
+
+  /* Get the verdef_data without verdaux.  */
+  verdef_data = elf_getdata_rawchunk(ebl->elf, offs[i_verdef],
+                                     addrs[i_verdefnum] * sizeof(Elf64_Verdef),
+                                     ELF_T_VDEF);
+  size_t verdauxnum = 0;
+  size_t vd_next_offset = 0;
+
+  for (size_t i = 0; i < addrs[i_verdefnum]; i++) {
+    GElf_Verdef *verdef = (GElf_Verdef *)(verdef_data->d_buf + vd_next_offset);
+    verdauxnum += verdef->vd_cnt;
+    vd_next_offset += verdef->vd_next;
+  }
+
+  /* Update the verdef_data to include the verdaux.  */
+  verdef_data = elf_getdata_rawchunk(
+      ebl->elf, offs[i_verdef],
+      (addrs[i_verdefnum] + verdauxnum) * sizeof(GElf_Verdef), ELF_T_VDEF);
+
+  for (size_t i = 0; i < syments; i++) {
+    /* Get the symbol table entry.  */
+    GElf_Sym sym_mem;
+    GElf_Sym *sym;
+    sym = gelf_getsym(symdata, i, &sym_mem);
+
+    char bindbuf[64];
+    char typebuf[64];
+    char scnbuf[64];
+    int class = gelf_getclass(ebl->elf);
+    Elf32_Word xndx;
+    xndx = sym->st_shndx;
+
+    printf(_("\
+%5ld: %0*" PRIx64 " %6" PRId64 " %-7s %-6s %-9s %6s %s"),
+           i, class == ELFCLASS32 ? 8 : 16, sym->st_value, sym->st_size,
+           ebl_symbol_type_name(ebl, GELF_ST_TYPE(sym->st_info), typebuf,
+                                sizeof(typebuf)),
+           ebl_symbol_binding_name(ebl, GELF_ST_BIND(sym->st_info), bindbuf,
+                                   sizeof(bindbuf)),
+           get_visibility_type(GELF_ST_VISIBILITY(sym->st_other)),
+           ebl_section_name(ebl, sym->st_shndx, xndx, scnbuf, sizeof(scnbuf),
+                            NULL, shnum),
+           ((char *)symstrdata->d_buf) + sym->st_name);
+
+    if (versym_data != NULL) {
+      /* Get the version information.  */
+      GElf_Versym versym_mem;
+      GElf_Versym *versym = gelf_getversym(versym_data, i, &versym_mem);
+
+      if (versym != NULL && ((*versym & 0x8000) != 0 || *versym > 1)) {
+        GElf_Vernaux vernaux_mem;
+        GElf_Vernaux *vernaux = NULL;
+        size_t vn_offset = 0;
+        GElf_Verneed verneed_mem;
+        GElf_Verneed *verneed = (GElf_Verneed *)verneed_data->d_buf;
+
+        while (verneed != NULL) {
+          size_t vna_offset = vn_offset;
+
+          vernaux = gelf_getvernaux(verneed_data, vna_offset += verneed->vn_aux,
+                                    &vernaux_mem);
+          while (vernaux != NULL && vernaux->vna_other != *versym &&
+                 vernaux->vna_next != 0 &&
+                 (verneed_data->d_size - vna_offset >= vernaux->vna_next)) {
+            /* Update the offset.  */
+            vna_offset += vernaux->vna_next;
+
+            vernaux =
+                (vernaux->vna_next == 0
+                     ? NULL
+                     : gelf_getvernaux(verneed_data, vna_offset, &vernaux_mem));
+          }
+
+          /* Check whether we found the version.  */
+          if (vernaux != NULL && vernaux->vna_other == *versym)
+            /* Found it.  */
+            break;
+
+          if (verneed_data->d_size - vn_offset < verneed->vn_next)
+            break;
+
+          vn_offset += verneed->vn_next;
+          verneed =
+              (verneed->vn_next == 0
+                   ? NULL
+                   : gelf_getverneed(verneed_data, vn_offset, &verneed_mem));
+        }
+
+        if (vernaux != NULL && vernaux->vna_other == *versym) {
+          printf("@%s (%u)", (char *)symstrdata->d_buf + vernaux->vna_name,
+                 (unsigned int)vernaux->vna_other);
+        }
+
+        if (addrs[i_verdefnum] && *versym != 0x8001) {
+          /* We must test both.  */
+          size_t vd_offset = 0;
+
+          GElf_Verdef verdef_mem;
+          GElf_Verdef *verdef = gelf_getverdef(verdef_data, 0, &verdef_mem);
+          while (verdef != NULL) {
+            if (verdef->vd_ndx == (*versym & 0x7fff))
+              /* Found the definition.  */
+              break;
+
+            if (verdef_data->d_size - vd_offset < verdef->vd_next)
+              break;
+
+            vd_offset += verdef->vd_next;
+            verdef =
+                (verdef->vd_next == 0
+                     ? NULL
+                     : gelf_getverdef(verdef_data, vd_offset, &verdef_mem));
+          }
+
+          if (verdef != NULL) {
+            GElf_Verdaux verdaux_mem;
+            GElf_Verdaux *verdaux = gelf_getverdaux(
+                verdef_data, vd_offset + verdef->vd_aux, &verdaux_mem);
+
+            if (verdaux != NULL)
+              printf((*versym & 0x8000) ? "@%s" : "@@%s",
+                     (char *)symstrdata->d_buf + verdaux->vda_name);
+          }
+        }
+      }
+    }
+    putchar_unlocked('\n');
+  }
+}
+
 
 
 static void
@@ -4955,8 +5150,16 @@ get_dynscn_addrs(Elf *elf, GElf_Phdr *phdr, GElf_Addr addrs[i_max])
       addrs[i_verdef] = dyn->d_un.d_ptr;
       break;
 
+    case DT_VERDEFNUM:
+      addrs[i_verdefnum] = dyn->d_un.d_val;
+      break;
+
     case DT_VERNEED:
       addrs[i_verneed] = dyn->d_un.d_ptr;
+      break;
+
+    case DT_VERNEEDNUM:
+      addrs[i_verneednum] = dyn->d_un.d_val;
       break;
 
     case DT_STRSZ:
