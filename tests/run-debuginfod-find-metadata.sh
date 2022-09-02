@@ -66,7 +66,7 @@ export DEBUGINFOD_URLS=http://127.0.0.1:$PORT2
 
 tempfiles json.txt
 # Check that we find 11 files(which means that the local and upstream correctly reply to the query)
-N_FOUND=`${abs_top_builddir}/debuginfod/debuginfod-find metadata "/?sr*" | jq '. | length'`
+N_FOUND=`env LD_LIBRARY_PATH=$ldpath ${abs_builddir}/../debuginfod/debuginfod-find metadata "/?sr*" | jq '. | length'`
 test $N_FOUND -eq 11
 
 # Query via the webapi as well
@@ -75,7 +75,7 @@ EXPECTED='[ { "atype": "e", "buildid": "f17a29b5a25bd4960531d82aa6b07c8abe84fa66
 test `curl http://127.0.0.1:$PORT2/metadata?glob=/usr/bin/*hi* | jq ". == $EXPECTED" ` = 'true'
 
 # An empty array is returned on server error or if the file DNE
-test `${abs_top_builddir}/debuginfod/debuginfod-find metadata "/this/isnt/there" | jq ". == [ ]" ` = 'true'
+test `env LD_LIBRARY_PATH=$ldpath ${abs_builddir}/../debuginfod/debuginfod-find metadata "/this/isnt/there" | jq ". == [ ]" ` = 'true'
 
 kill $PID1
 kill $PID2
@@ -84,6 +84,6 @@ wait $PID2
 PID1=0
 PID2=0
 
-test `${abs_top_builddir}/debuginfod/debuginfod-find metadata "/usr/bin/hithere" | jq ". == [ ]" ` = 'true'
+test `env LD_LIBRARY_PATH=$ldpath ${abs_builddir}/../debuginfod/debuginfod-find metadata "/usr/bin/hithere" | jq ". == [ ]" ` = 'true'
 
 exit 0
