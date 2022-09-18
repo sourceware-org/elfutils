@@ -139,8 +139,13 @@ asm (".section predict_data, \"aw\"; .previous\n"
 # endif
 #endif
 #ifndef likely
+#if defined(_MSC_VER)
+# define unlikely(expr) !!(expr)
+# define likely(expr) !!(expr)
+#else
 # define unlikely(expr) __builtin_expect (!!(expr), 0)
 # define likely(expr) __builtin_expect (!!(expr), 1)
+#endif
 #endif
 
 #define obstack_calloc(ob, size) \

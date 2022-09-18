@@ -115,7 +115,7 @@ elf_compress_gnu (Elf_Scn *scn, int inflate, unsigned int flags)
 
       uint64_t be64_size = htobe64 (orig_size);
       memmove (out_buf, "ZLIB", 4);
-      memmove (out_buf + 4, &be64_size, sizeof (be64_size));
+      memmove ((char *)out_buf + 4, &be64_size, sizeof (be64_size));
 
       /* We don't know anything about sh_entsize, sh_addralign and
 	 sh_flags won't have a SHF_COMPRESSED hint in the GNU format.

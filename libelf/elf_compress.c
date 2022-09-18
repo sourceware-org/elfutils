@@ -158,7 +158,7 @@ __libelf_compress (Elf_Scn *scn, size_t hsize, int ei_data,
       do
 	{
 	  z.avail_out = out_size - used;
-	  z.next_out = out_buf + used;
+	  z.next_out = (char *)out_buf + used;
 	  zrc = deflate (&z, flush);
 	  if (zrc == Z_STREAM_ERROR)
 	    {
@@ -223,7 +223,7 @@ __libelf_decompress (void *buf_in, size_t size_in, size_t size_out)
      unlikely, it would only happen when the compression was forced.
      But we do need a non-NULL buffer to return and set as result.
      Just make sure to always allocate at least 1 byte.  */
-  void *buf_out = malloc (size_out ?: 1);
+  void *buf_out = malloc (size_out ? size_out : 1);
   if (unlikely (buf_out == NULL))
     {
       __libelf_seterrno (ELF_E_NOMEM);
@@ -240,7 +240,7 @@ __libelf_decompress (void *buf_in, size_t size_in, size_t size_out)
   int zrc = inflateInit (&z);
   while (z.avail_in > 0 && likely (zrc == Z_OK))
     {
-      z.next_out = buf_out + (size_out - z.avail_out);
+      z.next_out = (char *)buf_out + (size_out - z.avail_out);
       zrc = inflate (&z, Z_FINISH);
       if (unlikely (zrc != Z_STREAM_END))
 	{
@@ -295,7 +295,7 @@ __libelf_decompress_elf (Elf_Scn *scn, size_t *size_out, size_t *addralign)
   size_t hsize = (elfclass == ELFCLASS32
 		  ? sizeof (Elf32_Chdr) : sizeof (Elf64_Chdr));
   size_t size_in = data->d_size - hsize;
-  void *buf_in = data->d_buf + hsize;
+  void *buf_in = (char *)data->d_buf + hsize;
   void *buf_out = __libelf_decompress (buf_in, size_in, chdr.ch_size);
   *size_out = chdr.ch_size;
   *addralign = chdr.ch_addralign;
