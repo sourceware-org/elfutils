@@ -21,6 +21,7 @@ Makefile.in
 /INSTALL
 /aclocal.m4
 /autom4te.*
+/build
 /config.cache
 /config.h
 /config.h.in
