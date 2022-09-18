@@ -195,9 +195,15 @@ typedef struct
 {
   char *ar_name;		/* Name of archive member.  */
   time_t ar_date;		/* File date.  */
+#if defined(_WIN32)
+  long ar_uid;
+  long ar_gid;
+  unsigned long ar_mode;
+#else
   uid_t ar_uid;			/* User ID.  */
   gid_t ar_gid;			/* Group ID.  */
   mode_t ar_mode;		/* File mode.  */
+#endif
   int64_t ar_size;		/* File size.  */
   char *ar_rawname;		/* Original name of archive member.  */
 } Elf_Arhdr;

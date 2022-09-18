@@ -40,21 +40,77 @@
 #include <stdlib.h>
 
 /* System dependend headers */
+#if !defined(_WIN32)
 #include <byteswap.h>
 #include <endian.h>
-#include <sys/mman.h>
+#endif
+
+#if defined(_MSC_VER)
+#include <basetsd.h>
+#include <io.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/types.h>
+typedef SSIZE_T ssize_t;
+#else
 #include <sys/param.h>
 #include <unistd.h>
+#endif
 
+#if HAVE_DECL_MMAP
+#include <sys/mman.h>
+#endif
 
 #if defined(HAVE_ERROR_H)
 #include <error.h>
-#elif defined(HAVE_ERR_H)
+#elif defined(HAVE_ERR_H) || defined(_MSC_VER)
 extern int error_message_count;
 void error(int status, int errnum, const char *format, ...);
 #else
 #error "err.h or error.h must be available"
 #endif
+
+#if defined(_MSC_VER)
+#define BIG_ENDIAN	4321
+#define LITTLE_ENDIAN	1234
+#define BYTE_ORDER	LITTLE_ENDIAN
+static inline int ftruncate(int fd, off_t length)
+{
+     return _chsize_s(fd, length);
+}
+#endif /* defined(_MSC_VER) */
+
+#if defined(_WIN32)
+static inline uint16_t bswap_16(uint16_t x) {
+  return ((((x) >> 8) & 0xff) | (((x) & 0xff) << 8));
+}
+
+static inline uint32_t bswap_32(uint32_t x) {
+  return (
+    (((x) & 0xff000000) >> 24) | (((x) & 0x00ff0000) >>  8) |
+    (((x) & 0x0000ff00) <<  8) | (((x) & 0x000000ff) << 24)
+  );
+}
+
+static inline uint64_t bswap_64(uint64_t x) {
+  return (
+    (((x) & 0xff00000000000000ull) >> 56) |
+    (((x) & 0x00ff000000000000ull) >> 40) |
+    (((x) & 0x0000ff0000000000ull) >> 24) |
+    (((x) & 0x000000ff00000000ull) >> 8)  |
+    (((x) & 0x00000000ff000000ull) << 8)  |
+    (((x) & 0x0000000000ff0000ull) << 24) |
+    (((x) & 0x000000000000ff00ull) << 40) |
+    (((x) & 0x00000000000000ffull) << 56)
+  );
+}
+
+#define htobe64(x) bswap_64(x)
+#define be64toh(x) bswap_64(x)
+
+ssize_t pread(int fd, void *buf, size_t count, off_t offset);
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset);
+#endif /* defined(_WIN32) */
 
 /* error (EXIT_FAILURE, ...) should be noreturn but on some systems it
    isn't.  This may cause warnings about code that should not be reachable.
