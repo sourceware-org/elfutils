@@ -52,9 +52,17 @@
 # define rwlock_unlock(lock) ((void) (lock))
 #endif	/* USE_LOCKS */
 
+#if !defined(NOT_HAVE_LIBINTL)
+#include <libintl.h>
+#endif
+
 /* gettext helper macros.  */
 #define N_(Str) Str
+#if !defined(NOT_HAVE_LIBINTL)
 #define _(Str) dgettext ("elfutils", Str)
+#else
+#define _(Str) N_(Str)
+#endif
 
 /* Compiler-specific definitions.  */
 #define strong_alias(name, aliasname) \
