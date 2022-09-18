@@ -64,7 +64,7 @@ write_file (Elf *elf, int64_t size, int change_bo, size_t shnum)
       __libelf_seterrno (ELF_E_WRITE_ERROR);
       return -1;
     }
-
+#if HAVE_DECL_MMAP
   /* Try to map the file if this isn't done yet.  */
   if (elf->map_address == NULL && elf->cmd == ELF_C_WRITE_MMAP)
     {
@@ -125,6 +125,7 @@ write_file (Elf *elf, int64_t size, int change_bo, size_t shnum)
 	size = -1;
     }
   else
+#endif
     {
       /* The file is not mmaped.  */
       if ((class == ELFCLASS32
@@ -145,6 +146,7 @@ write_file (Elf *elf, int64_t size, int change_bo, size_t shnum)
       size = -1;
     }
 
+#if HAVE_DECL_MMAP
   /* POSIX says that ftruncate and write may clear the S_ISUID and S_ISGID
      mode bits.  So make sure we restore them afterwards if they were set.
      This is not atomic if someone else chmod's the file while we operate.  */
@@ -156,6 +158,7 @@ write_file (Elf *elf, int64_t size, int change_bo, size_t shnum)
       __libelf_seterrno (ELF_E_WRITE_ERROR);
       size = -1;
     }
+#endif
 
   if (size != -1 && elf->parent == NULL)
     elf->maximum_size = size;

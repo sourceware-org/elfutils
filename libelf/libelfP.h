@@ -30,7 +30,11 @@
 #ifndef _LIBELFP_H
 #define _LIBELFP_H 1
 
+#if defined(_WIN32)
+#include "win32/ar.h"
+#else
 #include <ar.h>
+#endif
 #include <gelf.h>
 
 #include <errno.h>
