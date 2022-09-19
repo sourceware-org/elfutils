@@ -1,0 +1,8 @@
+{
+    "C_Cpp.autoAddFileAssociations": false,
+    "cmake.buildDirectory": "${workspaceFolder}/build/${buildKitTriple}",
+    "cmake.generator": "Ninja",
+    "cmake.configureArgs": [
+        "-DCMAKE_SYSTEM_PREFIX_PATH=C:/work/deps/${buildKitTriple}",
+    ]
+}
