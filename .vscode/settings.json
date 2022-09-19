@@ -1,0 +1,13 @@
+{
+    "C_Cpp.autoAddFileAssociations": false,
+    "cmake.buildDirectory": "${workspaceFolder}/build/${buildKitTriple}",
+    "cmake.generator": "Ninja",
+    "cmake.configureArgs": [
+        "-DBUILD_SHARED_LIBS=ON",
+        "-DCMAKE_SYSTEM_PREFIX_PATH=C:/work/deps/${buildKitTriple}",
+        "-DCMAKE_INSTALL_PREFIX=C:/work/deps/${buildKitTriple}-install",
+        "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>",
+        "-Dprefix=/mingw64",
+        "-DLIBELF_INSTALL=ON"
+    ]
+}
