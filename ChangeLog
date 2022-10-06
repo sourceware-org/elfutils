@@ -1,3 +1,8 @@
+2022-10-06  Ryan Goldberg <rgoldber@redhat.com>
+
+	* configure.ac (HAVE_JSON_C): Defined iff libjson-c
+	is found, and debuginfod metadata querying is thus enabled.
+
 2022-10-20  Mark Wielaard  <mark@klomp.org>
 
 	* Makefile.am (rpm): Remove --sign.

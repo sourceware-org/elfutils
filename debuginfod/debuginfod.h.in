@@ -79,6 +79,16 @@ int debuginfod_find_source (debuginfod_client *client,
                             const char *filename,
                             char **path);
 
+/*  Query the urls contained in $DEBUGINFOD_URLS for metadata
+    with paths matching the given, glob-supporting path.
+
+   If successful, return 0, otherwise return a posix error code.
+   If successful, set *metadata to a malloc'd json array
+   with each entry being a json object of metadata for 1 file.
+   Caller must free() it later. metadata MUST be non-NULL */
+int debuginfod_find_metadata (debuginfod_client *client,
+			    const char* path, char** metadata);
+
 typedef int (*debuginfod_progressfn_t)(debuginfod_client *c, long a, long b);
 void debuginfod_set_progressfn(debuginfod_client *c,
 			       debuginfod_progressfn_t fn);

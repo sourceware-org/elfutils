@@ -115,6 +115,9 @@ using namespace std;
 #define tid() pthread_self()
 #endif
 
+#ifdef HAVE_JSON_C
+  #include <json-c/json.h>
+#endif
 
 inline bool
 string_endswith(const string& haystack, const string& needle)
@@ -1824,6 +1827,58 @@ handle_buildid_r_match (bool internal_req_p,
   return r;
 }
 
+void
+add_client_federation_headers(debuginfod_client *client, MHD_Connection* conn){
+  // Transcribe incoming User-Agent:
+  string ua = MHD_lookup_connection_value (conn, MHD_HEADER_KIND, "User-Agent") ?: "";
+  string ua_complete = string("User-Agent: ") + ua;
+  debuginfod_add_http_header (client, ua_complete.c_str());
+
+  // Compute larger XFF:, for avoiding info loss during
+  // federation, and for future cyclicity detection.
+  string xff = MHD_lookup_connection_value (conn, MHD_HEADER_KIND, "X-Forwarded-For") ?: "";
+  if (xff != "")
+    xff += string(", "); // comma separated list
+
+  unsigned int xff_count = 0;
+  for (auto&& i : xff){
+    if (i == ',') xff_count++;
+  }
+
+  // if X-Forwarded-For: exceeds N hops,
+  // do not delegate a local lookup miss to upstream debuginfods.
+  if (xff_count >= forwarded_ttl_limit)
+    throw reportable_exception(MHD_HTTP_NOT_FOUND, "not found, --forwared-ttl-limit reached \
+and will not query the upstream servers");
+
+  // Compute the client's numeric IP address only - so can't merge with conninfo()
+  const union MHD_ConnectionInfo *u = MHD_get_connection_info (conn,
+                                                                MHD_CONNECTION_INFO_CLIENT_ADDRESS);
+  struct sockaddr *so = u ? u->client_addr : 0;
+  char hostname[256] = ""; // RFC1035
+  if (so && so->sa_family == AF_INET) {
+    (void) getnameinfo (so, sizeof (struct sockaddr_in), hostname, sizeof (hostname), NULL, 0,
+                        NI_NUMERICHOST);
+  } else if (so && so->sa_family == AF_INET6) {
+    struct sockaddr_in6* addr6 = (struct sockaddr_in6*) so;
+    if (IN6_IS_ADDR_V4MAPPED(&addr6->sin6_addr)) {
+      struct sockaddr_in addr4;
+      memset (&addr4, 0, sizeof(addr4));
+      addr4.sin_family = AF_INET;
+      addr4.sin_port = addr6->sin6_port;
+      memcpy (&addr4.sin_addr.s_addr, addr6->sin6_addr.s6_addr+12, sizeof(addr4.sin_addr.s_addr));
+      (void) getnameinfo ((struct sockaddr*) &addr4, sizeof (addr4),
+                          hostname, sizeof (hostname), NULL, 0,
+                          NI_NUMERICHOST);
+    } else {
+      (void) getnameinfo (so, sizeof (struct sockaddr_in6), hostname, sizeof (hostname), NULL, 0,
+                          NI_NUMERICHOST);
+    }
+  }
+
+  string xff_complete = string("X-Forwarded-For: ")+xff+string(hostname);
+  debuginfod_add_http_header (client, xff_complete.c_str());
+}
 
 static struct MHD_Response*
 handle_buildid_match (bool internal_req_p,
@@ -2010,57 +2065,7 @@ handle_buildid (MHD_Connection* conn,
       debuginfod_set_progressfn (client, & debuginfod_find_progress);
 
       if (conn)
-        {
-          // Transcribe incoming User-Agent:
-          string ua = MHD_lookup_connection_value (conn, MHD_HEADER_KIND, "User-Agent") ?: "";
-          string ua_complete = string("User-Agent: ") + ua;
-          debuginfod_add_http_header (client, ua_complete.c_str());
-
-          // Compute larger XFF:, for avoiding info loss during
-          // federation, and for future cyclicity detection.
-          string xff = MHD_lookup_connection_value (conn, MHD_HEADER_KIND, "X-Forwarded-For") ?: "";
-          if (xff != "")
-            xff += string(", "); // comma separated list
-
-          unsigned int xff_count = 0;
-          for (auto&& i : xff){
-            if (i == ',') xff_count++;
-          }
-
-          // if X-Forwarded-For: exceeds N hops,
-          // do not delegate a local lookup miss to upstream debuginfods.
-          if (xff_count >= forwarded_ttl_limit)
-            throw reportable_exception(MHD_HTTP_NOT_FOUND, "not found, --forwared-ttl-limit reached \
-and will not query the upstream servers");
-
-          // Compute the client's numeric IP address only - so can't merge with conninfo()
-          const union MHD_ConnectionInfo *u = MHD_get_connection_info (conn,
-                                                                       MHD_CONNECTION_INFO_CLIENT_ADDRESS);
-          struct sockaddr *so = u ? u->client_addr : 0;
-          char hostname[256] = ""; // RFC1035
-          if (so && so->sa_family == AF_INET) {
-            (void) getnameinfo (so, sizeof (struct sockaddr_in), hostname, sizeof (hostname), NULL, 0,
-                                NI_NUMERICHOST);
-          } else if (so && so->sa_family == AF_INET6) {
-            struct sockaddr_in6* addr6 = (struct sockaddr_in6*) so;
-            if (IN6_IS_ADDR_V4MAPPED(&addr6->sin6_addr)) {
-              struct sockaddr_in addr4;
-              memset (&addr4, 0, sizeof(addr4));
-              addr4.sin_family = AF_INET;
-              addr4.sin_port = addr6->sin6_port;
-              memcpy (&addr4.sin_addr.s_addr, addr6->sin6_addr.s6_addr+12, sizeof(addr4.sin_addr.s_addr));
-              (void) getnameinfo ((struct sockaddr*) &addr4, sizeof (addr4),
-                                  hostname, sizeof (hostname), NULL, 0,
-                                  NI_NUMERICHOST);
-            } else {
-              (void) getnameinfo (so, sizeof (struct sockaddr_in6), hostname, sizeof (hostname), NULL, 0,
-                                  NI_NUMERICHOST);
-            }
-          }
-          
-          string xff_complete = string("X-Forwarded-For: ")+xff+string(hostname);
-          debuginfod_add_http_header (client, xff_complete.c_str());
-        }
+        add_client_federation_headers(client, conn);
 
       if (artifacttype == "debuginfo")
 	fd = debuginfod_find_debuginfo (client,
@@ -2273,6 +2278,110 @@ handle_metrics (off_t* size)
 }
 
 static struct MHD_Response*
+handle_metadata (MHD_Connection* conn,
+                string path, off_t* size)
+{
+  MHD_Response* r;
+  (void) conn;
+  (void) path;
+  (void) size;
+  #ifdef HAVE_JSON_C
+  sqlite3 *thisdb = dbq;
+
+  json_object *metadata = json_object_new_array();
+  // Query locally for matching e, d and s files
+  if(metadata){
+    sqlite_ps *pp = new sqlite_ps (thisdb, "mhd-query-m",
+    "select * from \n"
+    "(\n"
+      "select \"e\" as atype, mtime, buildid, sourcetype, source0, source1, null as artifactsrc, null as source0ref "
+      "from " BUILDIDS "_query_e "
+      "union all \n"
+      "select \"d\" as atype, mtime, buildid, sourcetype, source0, source1, null as artifactsrc, null as source0ref "
+      "from " BUILDIDS "_query_d "
+      "union all \n"
+      "select \"s\" as atype, mtime, buildid, sourcetype, source0, source1, artifactsrc, source0ref "
+      "from " BUILDIDS "_query_s "
+      "\n"
+    ")\n"
+    "where source1 glob ? ");
+
+    pp->reset();
+    pp->bind(1, path);
+
+    unique_ptr<sqlite_ps> ps_closer(pp); // release pp if exception or return
+
+    // consume all the rows
+    int rc;
+    while (SQLITE_DONE != (rc = pp->step()))
+    {
+      if (rc != SQLITE_ROW) throw sqlite_exception(rc, "step");
+
+      auto get_column_str = [pp](int idx) { return string((const char*) sqlite3_column_text (*pp, idx) ?: ""); };
+
+      string atype       = get_column_str(0);
+      string mtime       = to_string(sqlite3_column_int64 (*pp, 1));
+      string buildid     = get_column_str(2);
+      string stype       = get_column_str(3);
+      string source0     = get_column_str(4);
+      string source1     = get_column_str(5);
+      string artifactsrc = get_column_str(6);
+      string source0ref  = get_column_str(7);
+
+      json_object *entry = json_object_new_object();
+      auto add_entry_metadata = [entry](const char* key, string value) { if(value != "") json_object_object_add(entry, key, json_object_new_string(value.c_str())); };
+
+      add_entry_metadata("atype", atype);
+      add_entry_metadata("mtime", mtime);
+      add_entry_metadata("buildid", buildid);
+      add_entry_metadata("stype", stype);
+      add_entry_metadata("source0", source0);
+      add_entry_metadata("source1", source1);
+      add_entry_metadata("artifactsrc", artifactsrc);
+      add_entry_metadata("source0ref", source0ref);
+
+      json_object_array_add(metadata, json_object_get(entry)); // Increase ref count to switch its ownership
+      json_object_put(entry);
+    }
+    pp->reset();
+  }
+  // Query upstream as well
+  debuginfod_client *client = debuginfod_pool_begin();
+  if (metadata && client != NULL)
+  {
+    add_client_federation_headers(client, conn);
+
+    char * upstream_metadata;
+    if(0 == debuginfod_find_metadata(client, path.c_str(), &upstream_metadata)){
+      json_object *upstream_metadata_json = json_tokener_parse(upstream_metadata);
+      if(NULL != upstream_metadata_json)
+        for (int i = 0, n = json_object_array_length(upstream_metadata_json); i < n; i++) {
+            json_object *entry = json_object_array_get_idx(upstream_metadata_json, i);
+            json_object_get(entry); // increment reference count
+            json_object_array_add(metadata, entry);
+        }
+      json_object_put(upstream_metadata_json);
+      free(upstream_metadata);
+    }
+    debuginfod_pool_end (client);
+  }
+
+  const char* metadata_str = (metadata != NULL) ?
+    json_object_to_json_string(metadata) : "[ ]" ;
+  r = MHD_create_response_from_buffer (strlen(metadata_str),
+                                       (void*) metadata_str,
+                                       MHD_RESPMEM_MUST_COPY);
+  *size = strlen(metadata_str);
+  json_object_put(metadata);
+  #else
+    throw reportable_exception("webapi error, metadata querying not supported by server");
+  #endif
+  if(r)
+    add_mhd_response_header(r, "Content-Type", "application/json");
+  return r;
+}
+
+static struct MHD_Response*
 handle_root (off_t* size)
 {
   static string version = "debuginfod (" + string (PACKAGE_NAME) + ") "
@@ -2405,6 +2514,23 @@ handler_cb (void * /*cls*/,
           artifacttype = "metrics";
           inc_metric("http_requests_total", "type", artifacttype);
           r = handle_metrics(& http_size);
+        }
+      else if (url1 == "/metadata")
+        {
+          tmp_inc_metric m ("thread_busy", "role", "http-metadata");
+
+          // At the moment only glob path querying is supported, but leave room for
+          // future expansion
+          const char *key = "glob";
+
+          const char* path = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, key);
+          if (NULL == path)
+            throw reportable_exception("/metadata webapi error, need glob");
+
+          artifacttype = "metadata";
+          inc_metric("http_requests_total", "type", artifacttype);
+          r = handle_metadata(connection, path, &http_size);
+
         }
       else if (url1 == "/")
         {

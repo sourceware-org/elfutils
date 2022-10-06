@@ -1,3 +1,10 @@
+2022-10-06  Ryan Goldberg <rgoldber@redhat.com>
+
+	* debuginfod-find.1: Document metadata query commandline API.
+	* debuginfod_find_debuginfo.1: Document metadata queryC API.
+	* debuginfod_find_metadata.3: New file.
+	* Makefile.am (notrans_dist_*_man3): Add it.
+
 2022-10-28  Arsen Arsenović  <arsen@aarsen.me>
 
 	* readelf.1: Document the --syms alias.

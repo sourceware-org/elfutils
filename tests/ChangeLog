@@ -1,3 +1,9 @@
+2022-10-06  Ryan Goldberg <rgoldber@redhat.com>
+
+	* run-debuginfod-find-metadata.sh: New test.
+	* Makefile.am (TESTS): Add run-debuginfod-find-metadata.sh.
+	(EXTRA_DIST): Likewise.
+
 2022-09-20  Yonggang Luo  <luoyonggang@gmail.com>
 
 	* Makefile.am (EXTRA_DIST): Remove debuginfod-rpms/hello2.spec.

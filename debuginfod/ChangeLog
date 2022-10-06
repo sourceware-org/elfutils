@@ -1,3 +1,27 @@
+2022-10-06  Ryan Goldberg <rgoldber@redhat.com>
+
+	* Makefile.am (debuginfod_LDADD): Add jsonc_LIBS.
+	(libdebuginfod_so_LDLIBS): Likewise.
+	* debuginfod-find.c (main): Add command line interface for
+	metadata query by path.
+	* debuginfod.h.in: Added debuginfod_find_metadata.
+	* debuginfod.cxx (add_client_federation_headers): New function
+	created from existing code to remove code duplication.
+	(handle_buildid_match): Calls new add_client_federation_headers
+	function.
+	(handle_metadata): New function which queries local DB and
+	upstream for metadata.
+	(handler_cb): New accepted url type, /metadata.
+	* debuginfod-client.c (struct handle_data): New fields: metadata,
+	metadata_size, to store incoming metadata.
+	(metadata_callback): New function called by curl upon reciving
+	metedata
+	(init_server_urls, init_handle, perform_queries) : New functions created from
+	existing code within debuginfod_query_server to reduce code duplication.
+	(debuginfod_query_server_by_buildid): debuginfod_query_server renamed, and above
+	functions used in place of identical previously inline code.
+	(debuginfod_find_metadata): New function.
+
 2022-10-18  Daniel Thornburgh <dthorn@google.com>
 
   * debuginfod-client.c (debuginfod_query_server): Add DEBUGINFOD_HEADERS_FILE
