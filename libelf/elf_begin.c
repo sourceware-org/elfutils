@@ -1163,12 +1163,19 @@ elf_begin (int fildes, Elf_Cmd cmd, Elf *ref)
   if (ref != NULL)
     /* Make sure the descriptor is not suddenly going away.  */
     rwlock_rdlock (ref->lock);
+#if defined(F_GETFD)
   else if (unlikely (fcntl (fildes, F_GETFD) == -1 && errno == EBADF))
     {
       /* We cannot do anything productive without a file descriptor.  */
       __libelf_seterrno (ELF_E_INVALID_FILE);
       return NULL;
     }
+#else
+  else if (fildes < 0)
+    {
+      return NULL;
+    }
+#endif
 
   switch (cmd)
     {
