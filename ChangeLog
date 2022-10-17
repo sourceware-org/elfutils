@@ -1,3 +1,7 @@
+2022-12-17  Yonggang Luo <mark@klomp.org>
+
+	* .gitignore: Ignore build directory
+
 2022-11-02  Mark Wielaard  <mark@klomp.org>
 
 	* configure.ac (AC_INIT): Set version to 0.188.
