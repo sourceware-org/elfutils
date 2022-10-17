@@ -69,7 +69,11 @@
   extern __typeof (name) aliasname __attribute__ ((alias (#name)));
 
 #ifdef __i386__
+#if defined(_MSC_VER)
+# define internal_function
+#else
 # define internal_function __attribute__ ((regparm (3), stdcall))
+#endif
 #else
 # define internal_function /* nothing */
 #endif

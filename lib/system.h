@@ -40,13 +40,33 @@
 #include <stdlib.h>
 
 /* System dependend headers */
+#if defined(_WIN32)
+#include <stdio.h>
+#else
 #include <byteswap.h>
 #include <endian.h>
+#endif
 #if HAVE_DECL_MMAP
 #include <sys/mman.h>
 #endif
+#if defined(_MSC_VER)
+#include <BaseTsd.h>
+#include <dirent.h>
+#include <io.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#if defined(_WIN64)
+    typedef __int64 LONG_PTR;
+#else
+    typedef __w64 long LONG_PTR;
+#endif
+typedef SSIZE_T ssize_t;
+typedef int pid_t;
+#else
 #include <sys/param.h>
 #include <unistd.h>
+#endif
 
 #if defined(HAVE_ERROR_H)
 #include <error.h>
@@ -54,6 +74,76 @@
 extern int error_message_count;
 void error(int status, int errnum, const char *format, ...);
 #endif
+
+#if defined(_MSC_VER)
+#define strncasecmp _strnicmp
+#define strcasecmp _stricmp
+int mkstemp(char *tmpl);
+char *basename(char *s);
+int ftruncate(int fd, off_t length);
+int vasprintf(char **strp, const char *format, va_list ap);
+#endif /* defined(_MSC_VER) */
+
+#if defined(_WIN32)
+#define BIG_ENDIAN 4321
+#define LITTLE_ENDIAN 1234
+#define BYTE_ORDER LITTLE_ENDIAN
+
+#define putchar_unlocked putchar
+#define fputc_unlocked fputc
+#define fputs_unlocked fputs
+#define realpath(N,R) _fullpath((R), (N), _MAX_PATH)
+
+struct obstack;
+
+int
+obstack_printf (struct obstack *obs, const char *format, ...);
+
+static inline void assert_perror(int errnum) {
+}
+
+static inline char *stpcpy(char *restrict dest, const char *restrict src)
+{
+  strcpy(dest, src);
+  return dest + strlen(src);
+}
+
+static inline char *stpncpy(char *restrict dest, const char *restrict src, size_t n)
+{
+  strncpy(dest, src, n);
+  return dest + strnlen(src, n);
+}
+
+static inline uint16_t bswap_16(uint16_t x) {
+  return ((((x) >> 8) & 0xff) | (((x) & 0xff) << 8));
+}
+
+static inline uint32_t bswap_32(uint32_t x) {
+  return (
+    (((x) & 0xff000000) >> 24) | (((x) & 0x00ff0000) >>  8) |
+    (((x) & 0x0000ff00) <<  8) | (((x) & 0x000000ff) << 24)
+  );
+}
+
+static inline uint64_t bswap_64(uint64_t x) {
+  return (
+    (((x) & 0xff00000000000000ull) >> 56) |
+    (((x) & 0x00ff000000000000ull) >> 40) |
+    (((x) & 0x0000ff0000000000ull) >> 24) |
+    (((x) & 0x000000ff00000000ull) >> 8)  |
+    (((x) & 0x00000000ff000000ull) << 8)  |
+    (((x) & 0x0000000000ff0000ull) << 24) |
+    (((x) & 0x000000000000ff00ull) << 40) |
+    (((x) & 0x00000000000000ffull) << 56)
+  );
+}
+
+#define htobe64(x) bswap_64(x)
+#define be64toh(x) bswap_64(x)
+
+ssize_t pread(int fd, void *buf, size_t count, off_t offset);
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset);
+#endif /* defined(_WIN32) */
 
 /* error (EXIT_FAILURE, ...) should be noreturn but on some systems it
    isn't.  This may cause warnings about code that should not be reachable.

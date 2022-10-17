@@ -16,7 +16,7 @@ git clone git://sourceware.org/git/elfutils.git
 
 To build a git checkout do:
   autoreconf -i -f && \
-  ./configure --enable-maintainer-mode && \
+  ./configure --enable-maintainer-mode --disable-debuginfod --disable-libdebuginfod --disable-symbol-versioning && \
   make && make check
 
 The developer mailinglist to send patches to is
