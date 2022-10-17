@@ -34,9 +34,12 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
-#include <stdio_ext.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if !defined(_WIN32)
+#include <stdio_ext.h>
+#endif
 
 #include <gelf.h>
 #include "libasmP.h"
@@ -56,8 +59,10 @@ prepare_text_output (AsmCtx_t *result)
 	  free (result);
 	  result = NULL;
 	}
+#if !defined(_WIN32)
       else
 	__fsetlocking (result->out.file, FSETLOCKING_BYCALLER);
+#endif
     }
 
   return result;
