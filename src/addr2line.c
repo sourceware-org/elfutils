@@ -381,7 +381,7 @@ print_dwarf_function (Dwfl_Module *mod, Dwarf_Addr addr)
 		  if (file == NULL)
 		    file = "???";
 		  else if (only_basenames)
-		    file = basename (file);
+		    file = basename ((char *)file);
 		  else if (use_comp_dir && file[0] != '/')
 		    {
 		      const char *const *dirs;
@@ -564,7 +564,7 @@ print_src (const char *src, int lineno, int linecol, Dwarf_Die *cu)
   const char *comp_dir_sep = "";
 
   if (only_basenames)
-    src = basename (src);
+    src = basename ((char *)src);
   else if (use_comp_dir && src[0] != '/')
     {
       Dwarf_Attribute attr;

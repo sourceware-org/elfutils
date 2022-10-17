@@ -719,7 +719,7 @@ dwfl_segment_report_module (Dwfl *dwfl, int ndx, const char *name,
 	      bias += fixup;
 	      if (module->name[0] != '\0')
 		{
-		  name = basename (module->name);
+		  name = basename ((char *)module->name);
 		  name_is_final = true;
 		}
 	      break;

@@ -469,7 +469,7 @@ report_r_debug (uint_fast8_t elfclass, uint_fast8_t elfdata,
 		      if (r_debug_info_module == NULL)
 			{
 			  // XXX hook for sysroot
-			  mod = __libdwfl_report_elf (dwfl, basename (name),
+			  mod = __libdwfl_report_elf (dwfl, basename ((char *)name),
 						      name, fd, elf, base,
 						      true, true);
 			  if (mod != NULL)
