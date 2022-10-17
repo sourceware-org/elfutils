@@ -474,7 +474,7 @@ __elfw2(LIBELFBITS,updatemmap) (Elf *elf, int change_bo, size_t shnum)
 
   /* Make sure the content hits the disk.  */
   char *msync_start = ((char *) elf->map_address
-		       + (elf->start_offset & ~(sysconf (_SC_PAGESIZE) - 1)));
+		       + (elf->start_offset & ~(sys_get_page_size() - 1)));
   char *msync_end = ((char *) elf->map_address
 		     + elf->start_offset + ehdr->e_shoff
 		     + ehdr->e_shentsize * shnum);

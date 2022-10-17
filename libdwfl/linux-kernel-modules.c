@@ -550,7 +550,7 @@ intuit_kernel_bounds (Dwarf_Addr *start, Dwarf_Addr *end, Dwarf_Addr *notes)
 	    *notes = *end;
 	}
 
-      Dwarf_Addr round_kernel = sysconf (_SC_PAGESIZE);
+      Dwarf_Addr round_kernel = sys_get_page_size();
       *start &= -(Dwarf_Addr) round_kernel;
       *end += round_kernel - 1;
       *end &= -(Dwarf_Addr) round_kernel;

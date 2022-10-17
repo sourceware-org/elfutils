@@ -200,6 +200,9 @@ pread_retry (int fd, void *buf, size_t len, off_t off)
   return recvd;
 }
 
+size_t
+sys_get_page_size(void);
+
 /* The demangler from libstdc++.  */
 extern char *__cxa_demangle (const char *mangled_name, char *output_buffer,
 			     size_t *length, int *status);

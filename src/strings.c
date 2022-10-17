@@ -163,7 +163,7 @@ main (int argc, char *argv[])
   elf_version (EV_CURRENT);
 
   /* Determine the page size.  We will likely need it a couple of times.  */
-  ps = sysconf (_SC_PAGESIZE);
+  ps = sys_get_page_size();
 
   struct stat st;
   int result = 0;

@@ -422,7 +422,7 @@ dwfl_linux_proc_find_elf (Dwfl_Module *mod __attribute__ ((unused)),
       if (fd < 0)
 	goto detach;
 
-      *elfp = elf_from_remote_memory (base, sysconf (_SC_PAGESIZE), NULL,
+      *elfp = elf_from_remote_memory (base, sys_get_page_size(), NULL,
 				      &read_proc_memory, &fd);
 
       close (fd);

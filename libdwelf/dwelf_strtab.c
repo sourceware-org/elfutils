@@ -86,7 +86,7 @@ dwelf_strtab_init (bool nullstr)
 {
   if (ps == 0)
     {
-      ps = sysconf (_SC_PAGESIZE);
+      ps = sys_get_page_size();
       assert (sizeof (struct memoryblock) < ps - MALLOC_OVERHEAD);
     }
 

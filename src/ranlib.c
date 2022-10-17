@@ -122,7 +122,7 @@ copy_content (Elf *elf, int newfd, off_t off, size_t n)
   assert (off + n <= len);
 
   /* Tell the kernel we will read all the pages sequentially.  */
-  size_t ps = sysconf (_SC_PAGESIZE);
+  size_t ps = sys_get_page_size();
   if (n > 2 * ps)
     posix_madvise (rawfile + (off & ~(ps - 1)), n, POSIX_MADV_SEQUENTIAL);
 

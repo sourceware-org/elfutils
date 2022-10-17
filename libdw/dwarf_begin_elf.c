@@ -502,7 +502,7 @@ dwarf_begin_elf (Elf *elf, Dwarf_Cmd cmd, Elf_Scn *scngrp)
 
 
   /* Default memory allocation size.  */
-  size_t mem_default_size = sysconf (_SC_PAGESIZE) - 4 * sizeof (void *);
+  size_t mem_default_size = sys_get_page_size() - 4 * sizeof (void *);
   assert (sizeof (struct Dwarf) < mem_default_size);
 
   /* Allocate the data structure.  */
