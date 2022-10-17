@@ -32,9 +32,7 @@
 
 #include "libeu.h"
 #include <errno.h>
-#include <unistd.h>
 #include <sys/stat.h>
-#include <sys/mman.h>
 #include "system.h"
 
 int
@@ -45,6 +43,7 @@ crc32_file (int fd, uint32_t *resp)
   off_t off = 0;
   ssize_t count;
 
+#if HAVE_DECL_MMAP
   struct stat st;
   if (fstat (fd, &st) == 0)
     {
@@ -78,6 +77,7 @@ crc32_file (int fd, uint32_t *resp)
 	  munmap (mapped, mapsize);
 	}
     }
+#endif
 
   while ((count = TEMP_FAILURE_RETRY (pread (fd, buffer, sizeof buffer,
 					     off))) > 0)

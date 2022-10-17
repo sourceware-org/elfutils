@@ -222,8 +222,10 @@ elf_end (Elf *elf)
       /* The file was read or mapped for this descriptor.  */
       if ((elf->flags & ELF_F_MALLOCED) != 0)
 	free (elf->map_address);
+#if HAVE_DECL_MMAP
       else if ((elf->flags & ELF_F_MMAPPED) != 0)
 	munmap (elf->map_address, elf->maximum_size);
+#endif
     }
 
   rwlock_unlock (elf->lock);

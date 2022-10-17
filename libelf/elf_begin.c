@@ -645,10 +645,12 @@ static struct Elf *
 read_file (int fildes, int64_t offset, size_t maxsize,
 	   Elf_Cmd cmd, Elf *parent)
 {
+#if HAVE_DECL_MMAP
   void *map_address = NULL;
   int use_mmap = (cmd == ELF_C_READ_MMAP || cmd == ELF_C_RDWR_MMAP
 		  || cmd == ELF_C_WRITE_MMAP
 		  || cmd == ELF_C_READ_MMAP_PRIVATE);
+#endif
 
   if (parent == NULL)
     {
@@ -669,7 +671,7 @@ read_file (int fildes, int64_t offset, size_t maxsize,
       /* The parent is already loaded.  Use it.  */
       assert (maxsize != ~((size_t) 0));
     }
-
+#if HAVE_DECL_MMAP
   if (use_mmap)
     {
       if (parent == NULL)
@@ -713,6 +715,7 @@ read_file (int fildes, int64_t offset, size_t maxsize,
 
       return result;
     }
+#endif
 
   /* Otherwise we have to do it the hard way.  We read as much as necessary
      from the file whenever we need information which is not available.  */

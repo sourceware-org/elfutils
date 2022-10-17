@@ -42,7 +42,9 @@
 /* System dependend headers */
 #include <byteswap.h>
 #include <endian.h>
+#if HAVE_DECL_MMAP
 #include <sys/mman.h>
+#endif
 #include <sys/param.h>
 #include <unistd.h>
 

@@ -428,6 +428,7 @@ AC_CHECK_DECLS([memrchr, rawmemchr],[],[],
                [#define _GNU_SOURCE
                 #include <string.h>])
 AC_CHECK_DECLS([powerof2],[],[],[#include <sys/param.h>])
+AC_CHECK_DECLS([mmap],[],[],[#include <sys/mman.h>])
 AC_CHECK_DECLS([mempcpy],[],[],
                [#define _GNU_SOURCE
                 #include <string.h>])
