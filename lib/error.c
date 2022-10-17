@@ -28,12 +28,14 @@
 
 #include <config.h>
 
-#if !defined(HAVE_ERROR_H) && defined(HAVE_ERR_H)
+#if !defined(HAVE_ERROR_H)
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#if defined(HAVE_ERR_H)
 #include <err.h>
+#endif
 
 unsigned int error_message_count = 0;
 
@@ -44,6 +46,7 @@ void error(int status, int errnum, const char *format, ...) {
   fflush (stdout);
 
   va_start(argp, format);
+#if defined(HAVE_ERR_H)
   if (status)
     {
       if (errnum)
@@ -64,6 +67,17 @@ void error(int status, int errnum, const char *format, ...) {
       else
         vwarnx (format, argp);
     }
+#else
+  if (errnum)
+    {
+      errno = errnum;
+    }
+  vfprintf(stderr, format, argp);
+  if (status)
+    {
+      _exit(status);
+    }
+#endif
   va_end(argp);
 
   fflush (stderr);

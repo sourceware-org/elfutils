@@ -50,11 +50,9 @@
 
 #if defined(HAVE_ERROR_H)
 #include <error.h>
-#elif defined(HAVE_ERR_H)
+#else
 extern int error_message_count;
 void error(int status, int errnum, const char *format, ...);
-#else
-#error "err.h or error.h must be available"
 #endif
 
 /* error (EXIT_FAILURE, ...) should be noreturn but on some systems it
