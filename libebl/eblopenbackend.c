@@ -37,7 +37,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#include <system.h>
 #include <libeblP.h>
 
 Ebl *i386_init (Elf *, GElf_Half, Ebl *);

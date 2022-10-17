@@ -31,8 +31,6 @@
 # include <config.h>
 #endif
 
-#include <system.h>
-
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>

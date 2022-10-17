@@ -33,6 +33,7 @@
 #include <libasm.h>
 #include <libebl.h>
 
+#include <system.h>
 
 /* Backend handle.  */
 struct ebl

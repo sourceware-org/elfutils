@@ -37,10 +37,10 @@
 #include <string.h>
 #include <libeblP.h>
 
-#include "common.h"
-#include "libelfP.h"
-#include "libdwP.h"
-#include "memory-access.h"
+#include "../libelf/common.h"
+#include "../libelf/libelfP.h"
+#include "../libdw/libdwP.h"
+#include "../libdw/memory-access.h"
 
 
 void
