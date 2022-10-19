@@ -44,6 +44,11 @@
 
 #include "elf-knowledge.h"
 
+#ifdef _MSC_VER
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+typedef int pid_t;
+#endif
 
 /* Opaque type for the handle.  libasm.h defined the same thing.  */
 #ifndef _LIBASM_H
