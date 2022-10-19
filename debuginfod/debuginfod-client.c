@@ -1708,9 +1708,11 @@ debuginfod_query_server (debuginfod_client *c,
   tvs[0].tv_usec = tvs[1].tv_usec = 0;
   (void) futimes (fd, tvs);  /* best effort */
 
+#if !defined(_WIN32)
   /* PR27571: make cache files casually unwriteable; dirs are already 0700 */
   (void) fchmod(fd, 0400);
-                
+#endif
+
   /* rename tmp->real */
   rc = rename (target_cache_tmppath, target_cache_path);
   if (rc < 0)

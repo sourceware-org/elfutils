@@ -512,12 +512,14 @@ asm_end (AsmCtx_t *ctx)
   if (result != 0)
     return result;
 
+#if !defined(_WIN32)
   /* Make the new file globally readable and user/group-writable.  */
   if (fchmod (ctx->fd, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH) != 0)
     {
       __libasm_seterrno (ASM_E_CANNOT_CHMOD);
       return -1;
     }
+#endif
 
   /* Rename output file.  */
   if (rename (ctx->tmp_fname, ctx->fname) != 0)
