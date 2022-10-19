@@ -468,7 +468,7 @@ i386_disasm (Ebl *ebl __attribute__((unused)),
 
 	      /* gcc is not clever enough to see the following variables
 		 are not used uninitialized.  */
-	      asm (""
+	      __asm (""
 		   : "=mr" (opoff), "=mr" (correct_prefix), "=mr" (codep),
 		     "=mr" (next_curr), "=mr" (len));
 	    }
