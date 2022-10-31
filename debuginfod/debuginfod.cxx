@@ -176,7 +176,7 @@ static const char DEBUGINFOD_SQLITE_DDL[] =
   "        foreign key (buildid) references " BUILDIDS "_buildids(id) on update cascade on delete cascade,\n"
   "        primary key (buildid, file, mtime)\n"
   "        ) " WITHOUT_ROWID ";\n"
-  // Index for faster delete by file identifier
+  // Index for faster delete by file identifier and metadata searches
   "create index if not exists " BUILDIDS "_f_de_idx on " BUILDIDS "_f_de (file, mtime);\n"
   "create table if not exists " BUILDIDS "_f_s (\n"
   "        buildid integer not null,\n"
@@ -202,6 +202,8 @@ static const char DEBUGINFOD_SQLITE_DDL[] =
   "        ) " WITHOUT_ROWID ";\n"
   // Index for faster delete by archive file identifier
   "create index if not exists " BUILDIDS "_r_de_idx on " BUILDIDS "_r_de (file, mtime);\n"
+  // Index for metadata searches
+  "create index if not exists " BUILDIDS "_r_de_idx2 on " BUILDIDS "_r_de (content);\n"  
   "create table if not exists " BUILDIDS "_r_sref (\n" // outgoing dwarf sourcefile references from rpm
   "        buildid integer not null,\n"
   "        artifactsrc integer not null,\n"
@@ -389,6 +391,9 @@ static const struct argp_option options[] =
    { "passive", ARGP_KEY_PASSIVE, NULL, 0, "Do not scan or groom, read-only database.", 0 },
 #define ARGP_KEY_DISABLE_SOURCE_SCAN 0x1009
    { "disable-source-scan", ARGP_KEY_DISABLE_SOURCE_SCAN, NULL, 0, "Do not scan dwarf source info.", 0 },
+#define ARGP_KEY_METADATA_MAXTIME 0x100A
+   { "metadata-maxtime", ARGP_KEY_METADATA_MAXTIME, "SECONDS", 0,
+     "Number of seconds to limit metadata query run time, 0=unlimited.", 0 },
    { NULL, 0, NULL, 0, NULL, 0 },
   };
 
@@ -441,6 +446,8 @@ static unsigned forwarded_ttl_limit = 8;
 static bool scan_source_info = true;
 static string tmpdir;
 static bool passive_p = false;
+static unsigned metadata_maxtime_s = 5;
+
 
 static void set_metric(const string& key, double value);
 // static void inc_metric(const string& key);
@@ -641,6 +648,9 @@ parse_opt (int key, char *arg,
       break;
     case ARGP_KEY_DISABLE_SOURCE_SCAN:
       scan_source_info = false;
+      break;
+    case ARGP_KEY_METADATA_MAXTIME:
+      metadata_maxtime_s = (unsigned) atoi(arg);
       break;
       // case 'h': argp_state_help (state, stderr, ARGP_HELP_LONG|ARGP_HELP_EXIT_OK);
     default: return ARGP_ERR_UNKNOWN;
@@ -2277,74 +2287,101 @@ handle_metrics (off_t* size)
   return r;
 }
 
+
+#ifdef HAVE_JSON_C
 static struct MHD_Response*
 handle_metadata (MHD_Connection* conn,
-                string path, off_t* size)
+                 string key, string value, off_t* size)
 {
   MHD_Response* r;
-  (void) conn;
-  (void) path;
-  (void) size;
-  #ifdef HAVE_JSON_C
   sqlite3 *thisdb = dbq;
 
-  json_object *metadata = json_object_new_array();
   // Query locally for matching e, d and s files
-  if(metadata){
-    sqlite_ps *pp = new sqlite_ps (thisdb, "mhd-query-m",
-    "select * from \n"
-    "(\n"
-      "select \"e\" as atype, mtime, buildid, sourcetype, source0, source1, null as artifactsrc, null as source0ref "
-      "from " BUILDIDS "_query_e "
-      "union all \n"
-      "select \"d\" as atype, mtime, buildid, sourcetype, source0, source1, null as artifactsrc, null as source0ref "
-      "from " BUILDIDS "_query_d "
-      "union all \n"
-      "select \"s\" as atype, mtime, buildid, sourcetype, source0, source1, artifactsrc, source0ref "
-      "from " BUILDIDS "_query_s "
-      "\n"
-    ")\n"
-    "where source1 glob ? ");
 
-    pp->reset();
-    pp->bind(1, path);
+  string op;
+  if (key == "glob")
+    op = "glob";
+  else if (key == "file")
+    op = "=";
+  else
+    throw reportable_exception("/metadata webapi error, unsupported key");
 
-    unique_ptr<sqlite_ps> ps_closer(pp); // release pp if exception or return
+  string sql = string(
+                      // explicit query r_de and f_de once here, rather than the query_d and query_e
+                      // separately, because they scan the same tables, so we'd double the work
+                      "select d1.executable_p, d1.debuginfo_p, 0 as source_p, b1.hex, f1.name as file "
+                      "from " BUILDIDS "_r_de d1, " BUILDIDS "_files f1, " BUILDIDS "_buildids b1 "
+                      "where f1.id = d1.content and d1.buildid = b1.id and f1.name " + op + " ? "
+                      "union all \n"
+                      "select d2.executable_p, d2.debuginfo_p, 0, b2.hex, f2.name "
+                      "from " BUILDIDS "_f_de d2, " BUILDIDS "_files f2, " BUILDIDS "_buildids b2 "
+                      "where f2.id = d2.file and d2.buildid = b2.id and f2.name " + op + " ? "
+                      "union all \n"
+                      // delegate to query_s for this one
+                      "select 0, 0, 1, q.buildid, q.artifactsrc "
+                      "from " BUILDIDS "_query_s as q "
+                      "where q.artifactsrc " + op + " ? ");
+                      
+  sqlite_ps *pp = new sqlite_ps (thisdb, "mhd-query-meta-glob", sql);
+  pp->reset();
+  pp->bind(1, value);
+  pp->bind(2, value);
+  pp->bind(3, value);
+  unique_ptr<sqlite_ps> ps_closer(pp); // release pp if exception or return
 
-    // consume all the rows
-    int rc;
-    while (SQLITE_DONE != (rc = pp->step()))
+  json_object *metadata = json_object_new_array();
+  if (!metadata)
+    throw libc_exception(ENOMEM, "json allocation");
+  
+  // consume all the rows
+  struct timespec ts_start;
+  clock_gettime (CLOCK_MONOTONIC, &ts_start);
+  
+  int rc;
+  while (SQLITE_DONE != (rc = pp->step()))
     {
+      // break out of loop if we have searched too long
+      struct timespec ts_end;
+      clock_gettime (CLOCK_MONOTONIC, &ts_end);
+      double deltas = (ts_end.tv_sec - ts_start.tv_sec) + (ts_end.tv_nsec - ts_start.tv_nsec)/1.e9;
+      if (metadata_maxtime_s > 0 && deltas > metadata_maxtime_s)
+        break; // NB: no particular signal is given to the client about incompleteness
+      
       if (rc != SQLITE_ROW) throw sqlite_exception(rc, "step");
 
-      auto get_column_str = [pp](int idx) { return string((const char*) sqlite3_column_text (*pp, idx) ?: ""); };
+      int m_executable_p = sqlite3_column_int (*pp, 0);
+      int m_debuginfo_p  = sqlite3_column_int (*pp, 1);
+      int m_source_p     = sqlite3_column_int (*pp, 2);
+      string m_buildid   = (const char*) sqlite3_column_text (*pp, 3) ?: ""; // should always be non-null
+      string m_file      = (const char*) sqlite3_column_text (*pp, 4) ?: "";
 
-      string atype       = get_column_str(0);
-      string mtime       = to_string(sqlite3_column_int64 (*pp, 1));
-      string buildid     = get_column_str(2);
-      string stype       = get_column_str(3);
-      string source0     = get_column_str(4);
-      string source1     = get_column_str(5);
-      string artifactsrc = get_column_str(6);
-      string source0ref  = get_column_str(7);
+      auto add_metadata = [metadata, m_buildid, m_file](const string& type) {
+        json_object* entry = json_object_new_object();
+        if (NULL == entry) throw libc_exception (ENOMEM, "cannot allocate json");
+        defer_dtor<json_object*,int> entry_d(entry, json_object_put);
+        
+        auto add_entry_metadata = [entry](const char* k, string v) {
+          json_object* s;
+          if(v != "") {
+            s = json_object_new_string(v.c_str());
+            if (NULL == s) throw libc_exception (ENOMEM, "cannot allocate json");
+            json_object_object_add(entry, k, s);
+          }
+        };
+        
+        add_entry_metadata("type", type.c_str());
+        add_entry_metadata("buildid", m_buildid);
+        add_entry_metadata("file", m_file);
+        json_object_array_add(metadata, json_object_get(entry)); // Increase ref count to switch its ownership
+      };
 
-      json_object *entry = json_object_new_object();
-      auto add_entry_metadata = [entry](const char* key, string value) { if(value != "") json_object_object_add(entry, key, json_object_new_string(value.c_str())); };
+      if (m_executable_p) add_metadata("executable");
+      if (m_debuginfo_p) add_metadata("debuginfo");      
+      if (m_source_p) add_metadata("source");              
 
-      add_entry_metadata("atype", atype);
-      add_entry_metadata("mtime", mtime);
-      add_entry_metadata("buildid", buildid);
-      add_entry_metadata("stype", stype);
-      add_entry_metadata("source0", source0);
-      add_entry_metadata("source1", source1);
-      add_entry_metadata("artifactsrc", artifactsrc);
-      add_entry_metadata("source0ref", source0ref);
-
-      json_object_array_add(metadata, json_object_get(entry)); // Increase ref count to switch its ownership
-      json_object_put(entry);
     }
-    pp->reset();
-  }
+  pp->reset();
+
   // Query upstream as well
   debuginfod_client *client = debuginfod_pool_begin();
   if (metadata && client != NULL)
@@ -2352,15 +2389,17 @@ handle_metadata (MHD_Connection* conn,
     add_client_federation_headers(client, conn);
 
     char * upstream_metadata;
-    if(0 == debuginfod_find_metadata(client, path.c_str(), &upstream_metadata)){
+    if (0 == debuginfod_find_metadata(client, key.c_str(), value.c_str(), &upstream_metadata)) {
       json_object *upstream_metadata_json = json_tokener_parse(upstream_metadata);
       if(NULL != upstream_metadata_json)
-        for (int i = 0, n = json_object_array_length(upstream_metadata_json); i < n; i++) {
+        {
+          for (int i = 0, n = json_object_array_length(upstream_metadata_json); i < n; i++) {
             json_object *entry = json_object_array_get_idx(upstream_metadata_json, i);
             json_object_get(entry); // increment reference count
             json_object_array_add(metadata, entry);
+          }
+          json_object_put(upstream_metadata_json);
         }
-      json_object_put(upstream_metadata_json);
       free(upstream_metadata);
     }
     debuginfod_pool_end (client);
@@ -2368,18 +2407,19 @@ handle_metadata (MHD_Connection* conn,
 
   const char* metadata_str = (metadata != NULL) ?
     json_object_to_json_string(metadata) : "[ ]" ;
+  if (! metadata_str)
+    throw libc_exception (ENOMEM, "cannot allocate json");
   r = MHD_create_response_from_buffer (strlen(metadata_str),
                                        (void*) metadata_str,
                                        MHD_RESPMEM_MUST_COPY);
   *size = strlen(metadata_str);
   json_object_put(metadata);
-  #else
-    throw reportable_exception("webapi error, metadata querying not supported by server");
-  #endif
-  if(r)
+  if (r)
     add_mhd_response_header(r, "Content-Type", "application/json");
   return r;
 }
+#endif
+
 
 static struct MHD_Response*
 handle_root (off_t* size)
@@ -2515,23 +2555,20 @@ handler_cb (void * /*cls*/,
           inc_metric("http_requests_total", "type", artifacttype);
           r = handle_metrics(& http_size);
         }
+#ifdef HAVE_JSON_C
       else if (url1 == "/metadata")
         {
           tmp_inc_metric m ("thread_busy", "role", "http-metadata");
-
-          // At the moment only glob path querying is supported, but leave room for
-          // future expansion
-          const char *key = "glob";
-
-          const char* path = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, key);
-          if (NULL == path)
-            throw reportable_exception("/metadata webapi error, need glob");
+          const char* key = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "key");
+          const char* value = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "value");
+          if (NULL == value || NULL == key)
+            throw reportable_exception("/metadata webapi error, need key and value");
 
           artifacttype = "metadata";
           inc_metric("http_requests_total", "type", artifacttype);
-          r = handle_metadata(connection, path, &http_size);
-
+          r = handle_metadata(connection, key, value, &http_size);
         }
+#endif
       else if (url1 == "/")
         {
           artifacttype = "/";
@@ -3819,12 +3856,13 @@ void groom()
   if (interrupted) return;
 
   // NB: "vacuum" is too heavy for even daily runs: it rewrites the entire db, so is done as maxigroom -G
-  sqlite_ps g1 (db, "incremental vacuum", "pragma incremental_vacuum");
-  g1.reset().step_ok_done();
-  sqlite_ps g2 (db, "optimize", "pragma optimize");
-  g2.reset().step_ok_done();
-  sqlite_ps g3 (db, "wal checkpoint", "pragma wal_checkpoint=truncate");
-  g3.reset().step_ok_done();
+  { sqlite_ps g (db, "incremental vacuum", "pragma incremental_vacuum"); g.reset().step_ok_done(); }
+  // https://www.sqlite.org/lang_analyze.html#approx
+  { sqlite_ps g (db, "analyze setup", "pragma analysis_limit = 1000;\n"); g.reset().step_ok_done(); }
+  { sqlite_ps g (db, "analyze", "analyze"); g.reset().step_ok_done(); }
+  { sqlite_ps g (db, "analyze reload", "analyze sqlite_schema"); g.reset().step_ok_done(); } 
+  { sqlite_ps g (db, "optimize", "pragma optimize"); g.reset().step_ok_done(); }
+  { sqlite_ps g (db, "wal checkpoint", "pragma wal_checkpoint=truncate"); g.reset().step_ok_done(); }
 
   database_stats_report();
 

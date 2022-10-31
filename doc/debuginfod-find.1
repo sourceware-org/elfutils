@@ -30,7 +30,7 @@ debuginfod-find \- request debuginfo-related data
 .br
 .B debuginfod-find [\fIOPTION\fP]... source \fIPATH\fP \fI/FILENAME\fP
 .br
-.B debuginfod-find [\fIOPTION\fP]... metadata \fIGLOB\fP
+.B debuginfod-find [\fIOPTION\fP]... metadata \fIKEY\fP \fIVALUE\fP
 
 .SH DESCRIPTION
 \fBdebuginfod-find\fP queries one or more \fBdebuginfod\fP servers for
@@ -108,20 +108,34 @@ l l.
 \../bar/foo.c AT_comp_dir=/zoo/	source BUILDID /zoo//../bar/foo.c
 .TE
 
-.SS metadata \fIGLOB\fP
+.SS metadata \fIKEY\fP \fIVALUE\fP
 
-If the given path, which may be globbed, is known to the server,
-this request will result in a json string being written to
-\fBstdout\fP. The result will consist of a json array, with one
-json object for each matching file's metadata. The result can be piped
-into \fBjq\fP for easy processing. On failure, an empty array is written
-as the output. Unlike finding by buildid no new file will be created or cached.
+All designated debuginfod servers are queried for metadata about files
+in their index.  Different search keys may be supported by different
+servers.
 
-For a given file's metadata, the result is guaranteed to contain, \fBatype\fP
-(the atrifact type), \fBbuildid\fP, \fBmtime\fP (time of last data modification,
-seconds since Epoch), \fBstype\fP (the sourcetype), \fBsource0\fP (the path to
-the file in the local filesystem), \fBsource1\fP (the path which is being globbed against).
-Extra fields and duplicated metadata may appear.
+.TS
+l l l .
+KEY	VALUE	DESCRIPTION
+
+\fBfile\fP	path	match exact \fIpath\fP, including in archives
+\fBglob\fP	pattern	sqlite glob match \fIpattern\fP, including in archives
+.TE
+
+The results of the search are output to \fBstdout\fP as a JSON array
+of objects, supplying metadata about each match.  This metadata report
+may or may not be cached.  It may be incomplete and may contain
+duplicates.  For each match, the result is a JSON object with these
+fields.  Additional fields may be present.
+
+.TS
+l l l .
+NAME	TYPE	DESCRIPTION
+
+\fBbuildid\fP	string	hexadecimal buildid associated with the file
+\fBtype\fP	string	one of \fBdebuginfo\fP or \fBexecutable\fP or \fBsource\fP
+\fBfile\fP	string	matched file name, outside or inside the archive
+.TE
 
 .SH "OPTIONS"
 

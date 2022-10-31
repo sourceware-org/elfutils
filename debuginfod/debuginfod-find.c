@@ -52,7 +52,10 @@ static const char args_doc[] = N_("debuginfo BUILDID\n"
                                   "executable PATH\n"
                                   "source BUILDID /FILENAME\n"
                                   "source PATH /FILENAME\n"
-                                  "metadata GLOB");
+#ifdef HAVE_JSON_C                                  
+                                  "metadata KEY VALUE"
+#endif
+                                  );
 
 
 /* Definitions of arguments for argp functions.  */
@@ -144,16 +147,17 @@ main(int argc, char** argv)
       return 1;
     }
 
+#ifdef HAVE_JSON_C
   if(strcmp(argv[remaining], "metadata") == 0){
-    #ifdef HAVE_JSON_C
-      if (remaining+1 == argc)
+      if (remaining+2 == argc)
       {
-        fprintf(stderr, "If FILETYPE is \"metadata\" then GLOB must be given\n");
+        fprintf(stderr, "Require KEY and VALUE for \"metadata\"\n");
         return 1;
       }
 
       char* metadata;
-      int rc = debuginfod_find_metadata (client, argv[remaining+1], &metadata);
+      int rc = debuginfod_find_metadata (client, argv[remaining+1], argv[remaining+2],
+                                         &metadata);
 
       if (rc < 0)
       {
@@ -164,12 +168,8 @@ main(int argc, char** argv)
       printf("%s\n", metadata);
       free(metadata);
       return 0;
-    #else
-      fprintf(stderr, "If FILETYPE is \"metadata\" then libjson-c must be available\n");
-      return 1;
-    #endif
-
   }
+#endif
 
   /* If we were passed an ELF file name in the BUILDID slot, look in there. */
   unsigned char* build_id = (unsigned char*) argv[remaining+1];

@@ -57,7 +57,7 @@ int debuginfod_find_executable (debuginfod_client *c, const unsigned char *b,
 int debuginfod_find_source (debuginfod_client *c, const unsigned char *b,
                             int s, const char *f, char **p)  { return -ENOSYS; }
 int debuginfod_find_metadata (debuginfod_client *c,
-                                const char* p, char** m) { return -ENOSYS; }
+                              const char *k, const char* v, char** m) { return -ENOSYS; }
 void debuginfod_set_progressfn(debuginfod_client *c,
 			       debuginfod_progressfn_t fn) { }
 void debuginfod_set_verbose_fd(debuginfod_client *c, int fd) { }
@@ -1335,8 +1335,7 @@ debuginfod_query_server_by_buildid (debuginfod_client *c,
       else
         snprintf(data[i].url, PATH_MAX, "%s/%s/%s", server_url, build_id_bytes, type);
 
-      r = init_handle(c, debuginfod_write_callback, header_callback,
-        data+i,i, timeout, vfd);
+      r = init_handle(c, debuginfod_write_callback, header_callback, &data[i], i, timeout, vfd);
       if(0 != r){
         rc = r;
         if(filename) curl_free (escaped_string);
@@ -1738,13 +1737,15 @@ int debuginfod_find_source(debuginfod_client *client,
                                  "source", filename, path);
 }
 
+
 int debuginfod_find_metadata (debuginfod_client *client,
-			    const char* path, char** metadata)
+                              const char* key, const char* value, char** metadata)
 {
   (void) client;
-  (void) path;
-  if(NULL == metadata) return EPERM;
-  *metadata = strdup("[ ]"); // An empty JSON array
+  (void) key;
+  (void) value;
+  
+  if (NULL == metadata) return -EINVAL;
 #ifdef HAVE_JSON_C
   char *server_urls;
   char *urls_envvar;
@@ -1757,13 +1758,13 @@ int debuginfod_find_metadata (debuginfod_client *client,
     goto out;
   }
 
-  if(NULL == path){
-    rc = -ENOSYS;
+  if(NULL == value || NULL == key){
+    rc = -EINVAL;
     goto out;
   }
 
   if (vfd >= 0)
-    dprintf (vfd, "debuginfod_find_metadata %s\n", path);
+    dprintf (vfd, "debuginfod_find_metadata %s %s\n", key, value);
 
   /* Without query-able URL, we can stop here*/
   urls_envvar = getenv(DEBUGINFOD_URLS_ENV_VAR);
@@ -1843,12 +1844,21 @@ int debuginfod_find_metadata (debuginfod_client *client,
     data[i].metadata = NULL;
     data[i].metadata_size = 0;
 
-    // At the moment only glob path querying is supported, but leave room for
-    // future expansion
-    const char *key = "glob";
-    snprintf(data[i].url, PATH_MAX, "%s?%s=%s", server_url, key, path);
-    r = init_handle(client, metadata_callback, header_callback,
-      data+i, i, timeout, vfd);
+    // libcurl > 7.62ish has curl_url_set()/etc. to construct these things more properly.
+    // curl_easy_escape() is older
+    CURL *c = curl_easy_init();
+    if (c) {
+      char *key_escaped = curl_easy_escape(c, key, 0);
+      char *value_escaped = curl_easy_escape(c, value, 0);
+      snprintf(data[i].url, PATH_MAX, "%s?key=%s&value=%s", server_url,
+               // fallback to unescaped values in unlikely case of error
+               key_escaped ?: key, value_escaped ?: value);
+      curl_free(value_escaped);
+      curl_free(key_escaped);
+      curl_easy_cleanup(c);
+    }
+    
+    r = init_handle(client, metadata_callback, header_callback, &data[i], i, timeout, vfd);
     if(0 != r){
       rc = r;
       goto out2;
@@ -1898,7 +1908,6 @@ int debuginfod_find_metadata (debuginfod_client *client,
     free (data[i].metadata);
   }
 
-  free(*metadata);
   *metadata = strdup(json_object_to_json_string_ext(json_metadata, JSON_C_TO_STRING_PRETTY));
 
   free (data);
@@ -1934,7 +1943,8 @@ out:
   client->user_agent_set_p = 0;
 
   return rc;
-#else
+
+#else /* ! HAVE_JSON_C */
   return -ENOSYS;
 #endif
 }

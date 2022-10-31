@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright (C) 2019-2021 Red Hat, Inc.
+# Copyright (C) 2022 Red Hat, Inc.
 # This file is part of elfutils.
 #
 # This file is free software; you can redistribute it and/or modify
@@ -66,16 +66,16 @@ export DEBUGINFOD_URLS=http://127.0.0.1:$PORT2
 
 tempfiles json.txt
 # Check that we find 11 files(which means that the local and upstream correctly reply to the query)
-N_FOUND=`env LD_LIBRARY_PATH=$ldpath ${abs_builddir}/../debuginfod/debuginfod-find metadata "/?sr*" | jq '. | length'`
+N_FOUND=`env LD_LIBRARY_PATH=$ldpath ${abs_builddir}/../debuginfod/debuginfod-find metadata glob "/?sr*" | jq '. | length'`
 test $N_FOUND -eq 11
 
 # Query via the webapi as well
-MTIME=$(stat -c %Y D/hithere_1.0-1_amd64.deb)
-EXPECTED='[ { "atype": "e", "buildid": "f17a29b5a25bd4960531d82aa6b07c8abe84fa66", "mtime": "'$MTIME'", "stype": "R", "source0": "'$PWD'/D/hithere_1.0-1_amd64.deb", "source1": "/usr/bin/hithere"} ]'
-test `curl http://127.0.0.1:$PORT2/metadata?glob=/usr/bin/*hi* | jq ". == $EXPECTED" ` = 'true'
+EXPECTED='[ { "type": "executable", "buildid": "f17a29b5a25bd4960531d82aa6b07c8abe84fa66", "file": "/usr/bin/hithere"} ]'
+curl http://127.0.0.1:$PORT2'/metadata?key=glob&value=/usr/bin/*hi*'
+test `curl http://127.0.0.1:$PORT2'/metadata?key=glob&value=/usr/bin/*hi*' | jq ". == $EXPECTED" ` = 'true'
 
 # An empty array is returned on server error or if the file DNE
-test `env LD_LIBRARY_PATH=$ldpath ${abs_builddir}/../debuginfod/debuginfod-find metadata "/this/isnt/there" | jq ". == [ ]" ` = 'true'
+test `env LD_LIBRARY_PATH=$ldpath ${abs_builddir}/../debuginfod/debuginfod-find metadata file "/this/isnt/there" | jq ". == [ ]" ` = 'true'
 
 kill $PID1
 kill $PID2
@@ -84,6 +84,6 @@ wait $PID2
 PID1=0
 PID2=0
 
-test `env LD_LIBRARY_PATH=$ldpath ${abs_builddir}/../debuginfod/debuginfod-find metadata "/usr/bin/hithere" | jq ". == [ ]" ` = 'true'
+test `env LD_LIBRARY_PATH=$ldpath ${abs_builddir}/../debuginfod/debuginfod-find metadata file "/usr/bin/hithere" | jq ". == [ ]" ` = 'true'
 
 exit 0

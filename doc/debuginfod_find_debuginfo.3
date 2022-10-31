@@ -44,7 +44,8 @@ LOOKUP FUNCTIONS
 .BI "                           const char *" filename ","
 .BI "                           char ** " path ");"
 .BI "int debuginfod_find_metadata(debuginfod_client *" client ","
-.BI "                           const char *" path ","
+.BI "                           const char *" key ","
+.BI "                           const char *" value ","
 .BI "                           char** " metadata ");"
 
 OPTIONAL FUNCTIONS
@@ -113,10 +114,12 @@ A handle may be reused for a series of lookups, which can improve
 performance due to retention of connections and caches.
 
 .BR debuginfod_find_metadata (),
-likewise queries the debuginfod server URLs contained in
+likewise queries all debuginfod server URLs contained in
 .BR $DEBUGINFOD_URLS
-but instead retrieves metadata. The given \fIpath\fP may contained
-the standard glob characters.
+but instead retrieves metadata.  The query search mode is specified
+in the \fIkey\fP parameter, and its parameter \fIvalue\fP.  See
+\fIdebuginfod-find(1)\fP for more information on the available
+options for query key/value.
 
 .SH "RETURN VALUE"
 
@@ -127,11 +130,14 @@ use with all other calls.  On error \fBNULL\fP will be returned and
 If a find family function is successful, the resulting file is saved
 to the client cache and a file descriptor to that file is returned.
 The caller needs to \fBclose\fP() this descriptor.  Otherwise, a
-negative error code is returned. The one excpetion is \fBdebuginfod_find_metadata\fP
-which likewise returns negative error codes, but on success returns 0
-and sets \fI*metadata\fP to a string-form json array of the found matching
-metadata. This should be freed by the caller. See \fIdebuginfod-find(1)\fP for 
-more information on the metadata being returned.
+negative error code is returned.
+
+The one exception is \fBdebuginfod_find_metadata\fP, which likewise
+returns negative error codes, but on success returns 0 and sets
+\fI*metadata\fP to a string-form JSON array of the found matching
+metadata.  This should be freed by the caller.  See
+\fIdebuginfod-find(1)\fP for more information on the metadata being
+returned.
 
 .SH "OPTIONAL FUNCTIONS"
 
