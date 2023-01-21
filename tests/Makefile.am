@@ -426,6 +426,7 @@ EXTRA_DIST = run-arextract.sh run-arsymtest.sh run-ar.sh \
 	     testfilenolines.bz2 test-core-lib.so.bz2 test-core.core.bz2 \
 	     test-core.exec.bz2 run-addr2line-test.sh \
 	     run-addr2line-i-test.sh testfile-inlines.bz2 \
+	     testfile-inlines-lto.bz2 \
 	     run-addr2line-i-lex-test.sh testfile-lex-inlines.bz2 \
 	     run-addr2line-i-demangle-test.sh run-addr2line-alt-debugpath.sh \
 	     testfileppc32.bz2 testfileppc64.bz2 \

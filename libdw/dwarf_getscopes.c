@@ -173,12 +173,8 @@ pc_record (unsigned int depth, struct Dwarf_Die_Chain *die, void *arg)
     /* Not there yet.  */
     return 0;
 
-  /* Now we are in a scope that contains the concrete inlined instance.
-     Search it for the inline function's abstract definition.
-     If we don't find it, return to search the containing scope.
-     If we do find it, the nonzero return value will bail us out
-     of the postorder traversal.  */
-  return __libdw_visit_scopes (depth, die, NULL, &origin_match, NULL, a);
+  /* This is the innermost inline scope, we are done here.  */
+  return a->nscopes;
 }
 
 
@@ -193,8 +189,13 @@ dwarf_getscopes (Dwarf_Die *cudie, Dwarf_Addr pc, Dwarf_Die **scopes)
 
   int result = __libdw_visit_scopes (0, &cu, NULL, &pc_match, &pc_record, &a);
 
-  if (result == 0 && a.scopes != NULL)
-    result = __libdw_visit_scopes (0, &cu, NULL, &origin_match, NULL, &a);
+  if (result >= 0 && a.scopes != NULL && a.inlined > 0)
+    {
+      /* We like the find the inline function's abstract definition
+         scope, but that might be in a different CU.  */
+      cu.die = CUDIE (a.inlined_origin.cu);
+      result = __libdw_visit_scopes (0, &cu, NULL, &origin_match, NULL, &a);
+    }
 
   if (result > 0)
     *scopes = a.scopes;
