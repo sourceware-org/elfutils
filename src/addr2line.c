@@ -71,8 +71,9 @@ static const struct argp_option options[] =
   { "inlines", 'i', NULL, 0,
     N_("Show all source locations that caused inline expansion of subroutines at the address."),
     0 },
-  { "demangle", 'C', "ARG", OPTION_ARG_OPTIONAL,
+  { "demangle", OPT_DEMANGLER, "ARG", OPTION_ARG_OPTIONAL,
     N_("Show demangled symbols (ARG is always ignored)"), 0 },
+  { NULL, 'C', NULL, 0, N_("Show demangled symbols"), 0 },
   { "pretty-print", OPT_PRETTY, NULL, 0,
     N_("Print all information on one line, and indent inlines"), 0 },
   { "relative", OPT_RELATIVE, NULL, 0,
@@ -225,7 +226,10 @@ parse_opt (int key, char *arg, struct argp_state *state)
       print_addresses = true;
       break;
 
+    /* Ignore --target=bfdname.  */
     case 'b':
+      break;
+
     case 'C':
     case OPT_DEMANGLER:
       demangle = true;
